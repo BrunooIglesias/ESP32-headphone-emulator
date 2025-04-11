@@ -9,8 +9,11 @@ import Foundation
 import Combine
 
 class HeadphoneViewModel: ObservableObject {
-    @Published var connectionStatus: String = "Not connected"
+    @Published var connectionStatus: String = "Disconnected"
     @Published var receivedMessage: String = ""
+    @Published var batteryLevel: Double = 0.0
+    @Published var signalStrength: Double = 0.0
+    @Published var isPlaying: Bool = false
     
     private var bluetoothManager: BluetoothManager
     private var cancellables = Set<AnyCancellable>()
