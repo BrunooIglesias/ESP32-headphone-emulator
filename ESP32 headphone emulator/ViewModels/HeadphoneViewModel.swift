@@ -7,38 +7,73 @@
 
 import Foundation
 import Combine
+import SwiftUI
 
 class HeadphoneViewModel: ObservableObject {
+    private let bluetoothManager: BluetoothManager
+    
+    // Published properties
     @Published var connectionStatus: String = "Disconnected"
     @Published var receivedMessage: String = ""
+    @Published var isPlaying: Bool = false
+    @Published var volumeLevel: Int = 50
     @Published var batteryLevel: Double = 0.0
     @Published var signalStrength: Double = 0.0
-    @Published var isPlaying: Bool = false
-    
-    private var bluetoothManager: BluetoothManager
-    private var cancellables = Set<AnyCancellable>()
+    @Published var discoveredDevices: [BluetoothDevice] = []
+    @Published var isScanning: Bool = false
     
     init(bluetoothManager: BluetoothManager) {
         self.bluetoothManager = bluetoothManager
         
-        // Subscribe to updates from BluetoothManager
-        bluetoothManager.$isConnected
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] connected in
-                self?.connectionStatus = connected ? "Connected" : "Not connected"
-            }
-            .store(in: &cancellables)
+        // Subscribe to BluetoothManager updates
+        bluetoothManager.$connectionStatus
+            .assign(to: &$connectionStatus)
         
-        bluetoothManager.$receivedValue
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] value in
-                self?.receivedMessage = value
+        bluetoothManager.$receivedMessage
+            .assign(to: &$receivedMessage)
+        
+        bluetoothManager.$discoveredDevices
+            .assign(to: &$discoveredDevices)
+        
+        bluetoothManager.$isScanning
+            .assign(to: &$isScanning)
+        
+        bluetoothManager.$deviceStatus
+            .sink { [weak self] status in
+                guard let status = status else { return }
+                self?.isPlaying = status.playing
+                self?.volumeLevel = status.volume
+                self?.batteryLevel = Double(status.battery) / 100.0
+                self?.signalStrength = Double(status.signal) / 100.0
             }
             .store(in: &cancellables)
     }
     
-    // Expose sending commands to the view
+    private var cancellables = Set<AnyCancellable>()
+    
+    func startScanning() {
+        bluetoothManager.startScanning()
+    }
+    
+    func stopScanning() {
+        bluetoothManager.stopScanning()
+    }
+    
+    func connect(to device: BluetoothDevice) {
+        print("HeadphoneViewModel: Connecting to device: \(device.name)")
+        bluetoothManager.connect(to: device)
+    }
+    
+    func disconnect() {
+        print("HeadphoneViewModel: Disconnecting from current device")
+        bluetoothManager.disconnect()
+    }
+    
     func sendCommand(_ command: String) {
         bluetoothManager.sendCommand(command)
+    }
+    
+    func requestStatus() {
+        bluetoothManager.requestStatus()
     }
 }

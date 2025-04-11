@@ -10,144 +10,275 @@ import CoreBluetooth
 import Combine
 
 class BluetoothManager: NSObject, ObservableObject {
-    // Published properties to update subscribers (ViewModel)
-    @Published var state: CBManagerState = .unknown
-    @Published var discoveredPeripheral: CBPeripheral?
-    @Published var isConnected: Bool = false
-    @Published var receivedValue: String = ""
-    
     private var centralManager: CBCentralManager!
-    private var targetPeripheral: CBPeripheral?
+    private var connectedPeripheral: CBPeripheral?
+    private var commandCharacteristic: CBCharacteristic?
+    private var statusCharacteristic: CBCharacteristic?
     
-    private let serviceUUID = CBUUID(string: "4fafc201-1fb5-459e-8fcc-c5c9c331914b")
-    private let characteristicUUID = CBUUID(string: "beb5483e-36e1-4688-b7f5-ea07361b26a8")
+    // Service and Characteristic UUIDs
+    private let serviceUUID = CBUUID(string: "0000FFE0-0000-1000-8000-00805F9B34FB")
+    private let commandUUID = CBUUID(string: "0000FFE1-0000-1000-8000-00805F9B34FB")
+    private let statusUUID = CBUUID(string: "0000FFE2-0000-1000-8000-00805F9B34FB")
+    
+    // Published properties
+    @Published var discoveredDevices: [BluetoothDevice] = []
+    @Published var isScanning = false
+    @Published var connectionStatus = "Disconnected"
+    @Published var deviceStatus: DeviceStatus?
+    @Published var receivedMessage = ""
+    @Published var isBluetoothAvailable = false
     
     override init() {
         super.init()
-        // Initialize the central manager on the main queue
-        centralManager = CBCentralManager(delegate: self, queue: nil)
+        centralManager = CBCentralManager(delegate: self, queue: DispatchQueue.main, options: [CBCentralManagerOptionShowPowerAlertKey: true])
     }
     
-    // Method to send a command to the peripheral
-    func sendCommand(_ command: String) {
-        guard let peripheral = targetPeripheral,
-              let services = peripheral.services else { return }
+    func startScanning() {
+        guard centralManager.state == .poweredOn else {
+            print("Bluetooth is not powered on. Current state: \(centralManager.state.rawValue)")
+            return
+        }
         
-        for service in services where service.uuid == serviceUUID {
-            if let characteristics = service.characteristics {
-                for characteristic in characteristics where characteristic.uuid == characteristicUUID {
-                    if let data = command.data(using: .utf8) {
-                        peripheral.writeValue(data, for: characteristic, type: .withResponse)
-                    }
-                }
+        discoveredDevices.removeAll()
+        isScanning = true
+        print("Starting scan for devices...")
+        // Scan for all devices first, then filter by service
+        centralManager.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
+        
+        // After 2 seconds, switch to scanning for specific service
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self = self else { return }
+            if self.isScanning {
+                self.centralManager.stopScan()
+                self.centralManager.scanForPeripherals(withServices: [self.serviceUUID], options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
             }
         }
     }
+    
+    func stopScanning() {
+        guard centralManager.state == .poweredOn else { return }
+        isScanning = false
+        centralManager.stopScan()
+    }
+    
+    func connect(to device: BluetoothDevice) {
+        guard centralManager.state == .poweredOn else {
+            print("Bluetooth is not powered on. Current state: \(centralManager.state.rawValue)")
+            return
+        }
+        
+        print("Attempting to connect to device: \(device.name)")
+        
+        // Find the peripheral in our discovered devices list
+        if let index = discoveredDevices.firstIndex(where: { $0.id == device.id }),
+           let peripheral = discoveredDevices[index].peripheral {
+            print("Found peripheral, connecting...")
+            stopScanning()
+            centralManager.connect(peripheral, options: nil)
+        } else {
+            print("Error: Could not find peripheral for device")
+            // Try to find the peripheral again
+            if let peripheral = device.peripheral {
+                print("Found peripheral in device, connecting...")
+                stopScanning()
+                centralManager.connect(peripheral, options: nil)
+            } else {
+                print("Error: Peripheral is nil")
+            }
+        }
+    }
+    
+    func disconnect() {
+        guard centralManager.state == .poweredOn else { return }
+        if let peripheral = connectedPeripheral {
+            print("Disconnecting from peripheral: \(peripheral.name ?? "Unknown")")
+            centralManager.cancelPeripheralConnection(peripheral)
+        }
+    }
+    
+    func sendCommand(_ command: String) {
+        guard centralManager.state == .poweredOn,
+              let peripheral = connectedPeripheral,
+              let characteristic = commandCharacteristic else { return }
+        
+        let data = command.data(using: .utf8)!
+        peripheral.writeValue(data, for: characteristic, type: .withResponse)
+    }
+    
+    func requestStatus() {
+        guard centralManager.state == .poweredOn,
+              let peripheral = connectedPeripheral,
+              let characteristic = commandCharacteristic else { return }
+        
+        let data = "GET_STATUS".data(using: .utf8)!
+        peripheral.writeValue(data, for: characteristic, type: .withResponse)
+    }
 }
 
-extension BluetoothManager: CBCentralManagerDelegate, CBPeripheralDelegate {
-    // Monitor Bluetooth state
+extension BluetoothManager: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        self.state = central.state
         print("Bluetooth state updated: \(central.state.rawValue)")
-        if central.state == .poweredOn {
-            // Start scanning for peripherals with our service
-            print("Starting scan for peripherals...")
-            centralManager.scanForPeripherals(withServices: [serviceUUID],
-                                              options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
-        } else {
-            print("Bluetooth is not available. State: \(central.state.rawValue)")
+        switch central.state {
+        case .poweredOn:
+            isBluetoothAvailable = true
+            connectionStatus = "Ready to scan"
+            print("Bluetooth is powered on, starting scan...")
+            if connectedPeripheral == nil {
+                startScanning()
+            }
+        case .poweredOff:
+            isBluetoothAvailable = false
+            connectionStatus = "Bluetooth is powered off"
+            isScanning = false
+            print("Please turn on Bluetooth to use this app")
+        case .resetting:
+            isBluetoothAvailable = false
+            connectionStatus = "Bluetooth is resetting"
+            isScanning = false
+            print("Bluetooth is resetting, please wait...")
+        case .unauthorized:
+            isBluetoothAvailable = false
+            connectionStatus = "Bluetooth is unauthorized"
+            isScanning = false
+            print("Bluetooth access is unauthorized. Please check your settings.")
+        case .unknown:
+            isBluetoothAvailable = false
+            connectionStatus = "Bluetooth state is unknown"
+            isScanning = false
+            print("Bluetooth state is unknown. Please try again.")
+        case .unsupported:
+            isBluetoothAvailable = false
+            connectionStatus = "Bluetooth is not supported"
+            isScanning = false
+            print("Bluetooth is not supported on this device")
+        @unknown default:
+            isBluetoothAvailable = false
+            connectionStatus = "Bluetooth state is unknown"
+            isScanning = false
+            print("Unknown Bluetooth state")
         }
     }
     
-    // Called when a peripheral is discovered
-    func centralManager(_ central: CBCentralManager,
-                        didDiscover peripheral: CBPeripheral,
-                        advertisementData: [String: Any],
-                        rssi RSSI: NSNumber) {
+    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
         print("Discovered peripheral: \(peripheral.name ?? "Unknown")")
-        print("Advertisement data: \(advertisementData)")
-        if let name = peripheral.name, name.contains("ESP32_Headphone") {
-            // Stop scanning once our device is found
-            centralManager.stopScan()
-            targetPeripheral = peripheral
-            discoveredPeripheral = peripheral
-            peripheral.delegate = self
-            print("Found \(name), connecting now...")
-            centralManager.connect(peripheral, options: nil)
+        
+        peripheral.delegate = self  // Set delegate immediately upon discovery
+        
+        // Check if we already have this device
+        if let existingIndex = discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
+            // Update the existing device's RSSI and peripheral reference
+            discoveredDevices[existingIndex].rssi = RSSI.intValue
+            discoveredDevices[existingIndex].peripheral = peripheral
+        } else {
+            // Create a new device
+            let device = BluetoothDevice(
+                id: peripheral.identifier,
+                name: peripheral.name ?? "Unknown Device",
+                rssi: RSSI.intValue,
+                isConnected: false,
+                peripheral: peripheral
+            )
+            discoveredDevices.append(device)
         }
     }
     
-    // When connected, start discovering services
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        isConnected = true
-        print("Successfully connected to peripheral")
+        print("Successfully connected to peripheral: \(peripheral.name ?? "Unknown")")
+        connectedPeripheral = peripheral
+        peripheral.delegate = self
+        connectionStatus = "Connected"
+        
+        if let index = discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
+            discoveredDevices[index].isConnected = true
+        }
+        
+        // Discover services after connection
         peripheral.discoverServices([serviceUUID])
     }
     
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        print("Failed to connect to peripheral: \(error?.localizedDescription ?? "Unknown error")")
-        isConnected = false
+        print("Failed to connect to peripheral: \(peripheral.name ?? "Unknown")")
+        if let error = error {
+            print("Error: \(error.localizedDescription)")
+        }
+        connectionStatus = "Connection failed"
     }
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        print("Disconnected from peripheral: \(error?.localizedDescription ?? "No error")")
-        isConnected = false
-        // Try to reconnect
-        centralManager.connect(peripheral, options: nil)
+        connectedPeripheral = nil
+        commandCharacteristic = nil
+        statusCharacteristic = nil
+        connectionStatus = "Disconnected"
+        deviceStatus = nil
+        
+        if let index = discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
+            discoveredDevices[index].isConnected = false
+        }
+        
+        // Restart scanning
+        if central.state == .poweredOn {
+            startScanning()
+        }
     }
-    
-    // Discover services on the peripheral
+}
+
+extension BluetoothManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        if let error = error {
-            print("Error discovering services: \(error.localizedDescription)")
+        guard error == nil else {
+            print("Error discovering services: \(error!.localizedDescription)")
             return
         }
-        print("Discovered services: \(peripheral.services?.map { $0.uuid.uuidString } ?? [])")
+        
         guard let services = peripheral.services else { return }
-        for service in services where service.uuid == serviceUUID {
-            print("Discovering characteristics for service: \(service.uuid.uuidString)")
-            peripheral.discoverCharacteristics([characteristicUUID], for: service)
+        
+        for service in services {
+            if service.uuid == serviceUUID {
+                peripheral.discoverCharacteristics([commandUUID, statusUUID], for: service)
+            }
         }
     }
     
-    // Discover characteristics for each service
-    func peripheral(_ peripheral: CBPeripheral,
-                    didDiscoverCharacteristicsFor service: CBService,
-                    error: Error?) {
-        if let error = error {
-            print("Error discovering characteristics: \(error.localizedDescription)")
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        guard error == nil else {
+            print("Error discovering characteristics: \(error!.localizedDescription)")
             return
         }
-        print("Discovered characteristics: \(service.characteristics?.map { $0.uuid.uuidString } ?? [])")
+        
         guard let characteristics = service.characteristics else { return }
-        for characteristic in characteristics where characteristic.uuid == characteristicUUID {
-            print("Setting up characteristic: \(characteristic.uuid.uuidString)")
-            // Subscribe to notifications
-            peripheral.setNotifyValue(true, for: characteristic)
-            // Optionally read the initial value
-            peripheral.readValue(for: characteristic)
+        
+        for characteristic in characteristics {
+            if characteristic.uuid == commandUUID {
+                commandCharacteristic = characteristic
+                peripheral.setNotifyValue(true, for: characteristic)
+            } else if characteristic.uuid == statusUUID {
+                statusCharacteristic = characteristic
+                peripheral.setNotifyValue(true, for: characteristic)
+            }
+        }
+    }
+    
+    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard error == nil else {
+            print("Error receiving notification: \(error!.localizedDescription)")
+            return
+        }
+        
+        if let data = characteristic.value,
+           let message = String(data: data, encoding: .utf8) {
+            receivedMessage = message
+            
+            if characteristic.uuid == statusUUID {
+                if let statusData = try? JSONDecoder().decode(DeviceStatus.self, from: data) {
+                    deviceStatus = statusData
+                }
+            }
         }
     }
     
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
-        if let error = error {
-            print("Error setting notification state: \(error.localizedDescription)")
+        guard error == nil else {
+            print("Error setting notification state: \(error!.localizedDescription)")
             return
-        }
-        print("Notification state updated for characteristic: \(characteristic.uuid.uuidString)")
-    }
-    
-    // Called when characteristic value is updated (response from device)
-    func peripheral(_ peripheral: CBPeripheral,
-                    didUpdateValueFor characteristic: CBCharacteristic,
-                    error: Error?) {
-        if characteristic.uuid == characteristicUUID,
-           let data = characteristic.value,
-           let stringValue = String(data: data, encoding: .utf8) {
-            DispatchQueue.main.async {
-                self.receivedValue = stringValue
-            }
         }
     }
 }

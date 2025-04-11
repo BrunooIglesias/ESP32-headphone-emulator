@@ -68,7 +68,7 @@ struct ContentView: View {
                             )
                     }
                 } else {
-                    ScanningView()
+                    ScanningView(viewModel: viewModel)
                 }
                 
                 Spacer()
