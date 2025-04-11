@@ -9,9 +9,11 @@ import SwiftUI
 
 @main
 struct ESP32_headphone_emulatorApp: App {
+    let bluetoothManager = BluetoothManager()
+    
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(viewModel: HeadphoneViewModel(bluetoothManager: bluetoothManager))
         }
     }
 }
