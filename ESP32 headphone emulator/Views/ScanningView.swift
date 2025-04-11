@@ -1,50 +1,36 @@
 import SwiftUI
 
+/// A view that displays the scanning state and discovered devices
 struct ScanningView: View {
+    // MARK: - Properties
     @ObservedObject var viewModel: HeadphoneViewModel
-    @State private var rotation: Double = 0
     
+    // MARK: - Body
     var body: some View {
-        VStack(spacing: 30) {
-            // Scanning Animation
-            ZStack {
-                Circle()
-                    .stroke(Color.blue.opacity(0.3), lineWidth: 2)
-                    .frame(width: 100, height: 100)
-                
-                Circle()
-                    .trim(from: 0, to: 0.7)
-                    .stroke(Color.blue, lineWidth: 2)
-                    .frame(width: 100, height: 100)
-                    .rotationEffect(.degrees(rotation))
-                    .onAppear {
-                        withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) {
-                            rotation = 360
-                        }
-                    }
-                
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 30))
+        VStack(spacing: 20) {
+            // Scanning Status
+            HStack {
+                Image(systemName: "wifi")
                     .foregroundColor(.blue)
+                    .font(.title)
+                
+                Text(viewModel.isScanning ? "Scanning for devices..." : "Tap to scan")
+                    .foregroundColor(.white)
+                    .font(.headline)
             }
-            
-            // Scanning Text
-            Text(viewModel.isScanning ? "Scanning for devices..." : "No devices found")
-                .font(.title2)
-                .foregroundColor(.white)
             
             // Device List
             if !viewModel.discoveredDevices.isEmpty {
                 ScrollView {
-                    VStack(spacing: 15) {
+                    VStack(spacing: 10) {
                         ForEach(viewModel.discoveredDevices) { device in
                             DeviceRow(device: device) {
                                 viewModel.connect(to: device)
                             }
                         }
                     }
-                    .padding(.horizontal)
                 }
+                .frame(maxHeight: 200)
             }
             
             // Scan Button
@@ -56,29 +42,24 @@ struct ScanningView: View {
                 }
             }) {
                 Text(viewModel.isScanning ? "Stop Scanning" : "Start Scanning")
-                    .font(.headline)
                     .foregroundColor(.white)
                     .padding()
-                    .frame(maxWidth: .infinity)
                     .background(
                         RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.blue.opacity(0.7))
+                            .fill(Color.blue.opacity(0.3))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10)
                                     .stroke(Color.white.opacity(0.2), lineWidth: 1)
                             )
                     )
             }
-            .padding(.horizontal)
         }
         .padding()
-        .onAppear {
-            viewModel.startScanning()
-        }
     }
 }
 
-struct DeviceRow: View {
+// MARK: - Supporting Views
+private struct DeviceRow: View {
     let device: BluetoothDevice
     let onConnect: () -> Void
     
@@ -86,30 +67,24 @@ struct DeviceRow: View {
         Button(action: onConnect) {
             HStack {
                 Image(systemName: "headphones")
-                    .font(.title2)
                     .foregroundColor(.blue)
                 
                 VStack(alignment: .leading) {
                     Text(device.name)
-                        .font(.headline)
                         .foregroundColor(.white)
+                        .font(.headline)
+                    
                     Text("Signal: \(device.rssi) dBm")
+                        .foregroundColor(.white.opacity(0.7))
                         .font(.caption)
-                        .foregroundColor(.gray)
                 }
                 
                 Spacer()
                 
-                if device.isConnected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                } else {
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.gray)
-                }
+                Image(systemName: "chevron.right")
+                    .foregroundColor(.white.opacity(0.5))
             }
             .padding()
-            .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 10)
                     .fill(Color.black.opacity(0.3))
@@ -118,15 +93,15 @@ struct DeviceRow: View {
                             .stroke(Color.white.opacity(0.2), lineWidth: 1)
                     )
             )
-            .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle())
     }
 }
 
+// MARK: - Preview
 #Preview {
     let bluetoothManager = BluetoothManager()
     let viewModel = HeadphoneViewModel(bluetoothManager: bluetoothManager)
     return ScanningView(viewModel: viewModel)
+        .padding()
         .background(Color.black)
 } 

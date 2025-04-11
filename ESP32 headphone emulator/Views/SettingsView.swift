@@ -1,32 +1,28 @@
 import SwiftUI
 
+/// A view that displays application settings and configuration options
 struct SettingsView: View {
-    @Environment(\.dismiss) var dismiss
-    @State private var autoConnect = true
-    @State private var showNotifications = true
-    @State private var selectedTheme = "Dark"
-    @State private var volumeStep = 5
+    // MARK: - Properties
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("autoConnect") private var autoConnect = true
+    @AppStorage("showNotifications") private var showNotifications = true
+    @AppStorage("theme") private var theme = "Dark"
     
-    let themes = ["Dark", "Light", "System"]
-    
+    // MARK: - Body
     var body: some View {
         NavigationView {
-            List {
+            Form {
                 Section(header: Text("Connection")) {
-                    Toggle("Auto-connect", isOn: $autoConnect)
-                    Toggle("Show Notifications", isOn: $showNotifications)
+                    Toggle("Auto-connect to last device", isOn: $autoConnect)
+                    Toggle("Show connection notifications", isOn: $showNotifications)
                 }
                 
                 Section(header: Text("Appearance")) {
-                    Picker("Theme", selection: $selectedTheme) {
-                        ForEach(themes, id: \.self) { theme in
-                            Text(theme)
-                        }
+                    Picker("Theme", selection: $theme) {
+                        Text("Dark").tag("Dark")
+                        Text("Light").tag("Light")
+                        Text("System").tag("System")
                     }
-                }
-                
-                Section(header: Text("Audio")) {
-                    Stepper("Volume Step: \(volumeStep)", value: $volumeStep, in: 1...10)
                 }
                 
                 Section(header: Text("About")) {
@@ -38,9 +34,9 @@ struct SettingsView: View {
                     }
                     
                     HStack {
-                        Text("Developer")
+                        Text("Build")
                         Spacer()
-                        Text("Your Name")
+                        Text("1")
                             .foregroundColor(.gray)
                     }
                 }
@@ -53,6 +49,7 @@ struct SettingsView: View {
     }
 }
 
+// MARK: - Preview
 #Preview {
     SettingsView()
 } 
