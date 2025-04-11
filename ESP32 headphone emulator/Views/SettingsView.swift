@@ -1,14 +1,11 @@
 import SwiftUI
 
-/// A view that displays application settings and configuration options
 struct SettingsView: View {
-    // MARK: - Properties
     @Environment(\.dismiss) private var dismiss
     @AppStorage("autoConnect") private var autoConnect = true
     @AppStorage("showNotifications") private var showNotifications = true
     @AppStorage("theme") private var theme = "Dark"
     
-    // MARK: - Body
     var body: some View {
         NavigationView {
             Form {
@@ -49,7 +46,6 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Preview
 #Preview {
     SettingsView()
 } 

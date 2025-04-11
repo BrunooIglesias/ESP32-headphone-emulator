@@ -11,8 +11,8 @@ import SwiftUI
 
 class HeadphoneViewModel: ObservableObject {
     private let bluetoothManager: BluetoothManager
+    private var statusUpdateTimer: Timer?
     
-    // Published properties
     @Published var connectionStatus: String = "Disconnected"
     @Published var receivedMessage: String = ""
     @Published var isPlaying: Bool = false
@@ -25,9 +25,16 @@ class HeadphoneViewModel: ObservableObject {
     init(bluetoothManager: BluetoothManager) {
         self.bluetoothManager = bluetoothManager
         
-        // Subscribe to BluetoothManager updates
         bluetoothManager.$connectionStatus
-            .assign(to: &$connectionStatus)
+            .sink { [weak self] status in
+                self?.connectionStatus = status
+                if status == "Connected" {
+                    self?.startStatusUpdates()
+                } else if status == "Disconnected" {
+                    self?.stopStatusUpdates()
+                }
+            }
+            .store(in: &cancellables)
         
         bluetoothManager.$receivedMessage
             .assign(to: &$receivedMessage)
@@ -41,10 +48,12 @@ class HeadphoneViewModel: ObservableObject {
         bluetoothManager.$deviceStatus
             .sink { [weak self] status in
                 guard let status = status else { return }
-                self?.isPlaying = status.playing
-                self?.volumeLevel = status.volume
-                self?.batteryLevel = Double(status.battery) / 100.0
-                self?.signalStrength = Double(status.signal) / 100.0
+                DispatchQueue.main.async {
+                    self?.isPlaying = status.playing
+                    self?.volumeLevel = status.volume
+                    self?.batteryLevel = Double(status.battery) / 100.0
+                    self?.signalStrength = Double(status.signal) / 100.0
+                }
             }
             .store(in: &cancellables)
     }
@@ -75,5 +84,24 @@ class HeadphoneViewModel: ObservableObject {
     
     func requestStatus() {
         bluetoothManager.requestStatus()
+    }
+    
+    private func startStatusUpdates() {
+        // Request initial status immediately
+        requestStatus()
+        
+        // Set up timer for periodic status updates
+        statusUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.requestStatus()
+        }
+    }
+    
+    private func stopStatusUpdates() {
+        statusUpdateTimer?.invalidate()
+        statusUpdateTimer = nil
+    }
+    
+    deinit {
+        stopStatusUpdates()
     }
 }

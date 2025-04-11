@@ -1,24 +1,19 @@
 import SwiftUI
 
-/// A view that displays the current status of the device including connection, battery, and signal strength
 struct DeviceStatusView: View {
-    // MARK: - Properties
     let connectionStatus: String
     let batteryLevel: Double
     let signalStrength: Double
     
-    // MARK: - Body
     var body: some View {
         VStack(spacing: 15) {
-            // Connection Status
             StatusRow(
                 icon: "wifi",
                 title: "Status",
                 value: connectionStatus,
                 color: connectionStatus == "Connected" ? .green : .red
             )
-            
-            // Battery Level
+
             StatusRow(
                 icon: "battery.100",
                 title: "Battery",
@@ -26,7 +21,6 @@ struct DeviceStatusView: View {
                 color: .blue
             )
             
-            // Signal Strength
             StatusRow(
                 icon: "antenna.radiowaves.left.and.right",
                 title: "Signal",
@@ -46,7 +40,6 @@ struct DeviceStatusView: View {
     }
 }
 
-// MARK: - Supporting Views
 private struct StatusRow: View {
     let icon: String
     let title: String
@@ -71,7 +64,6 @@ private struct StatusRow: View {
     }
 }
 
-// MARK: - Preview
 #Preview {
     DeviceStatusView(
         connectionStatus: "Connected",

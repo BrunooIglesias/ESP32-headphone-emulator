@@ -1,14 +1,11 @@
 import SwiftUI
 
-/// A custom button with a glass-like appearance
 struct GlassButton: View {
-    // MARK: - Properties
     let title: String
     let action: () -> Void
     let color: Color
     let icon: String
     
-    // MARK: - Body
     var body: some View {
         Button(action: action) {
             VStack {
@@ -32,7 +29,6 @@ struct GlassButton: View {
     }
 }
 
-// MARK: - Preview
 #Preview {
     HStack {
         GlassButton(title: "Play", action: {}, color: .green, icon: "play.fill")

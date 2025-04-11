@@ -3,7 +3,6 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 
-// Use standard BLE service UUIDs for better compatibility
 #define SERVICE_UUID        "0000FFE0-0000-1000-8000-00805F9B34FB"
 #define CHARACTERISTIC_UUID "0000FFE1-0000-1000-8000-00805F9B34FB"
 #define STATUS_UUID        "0000FFE2-0000-1000-8000-00805F9B34FB"
@@ -19,7 +18,9 @@ int volumeLevel = 50;  // 0-100
 int batteryLevel = 100;  // 0-100
 int signalStrength = 100;  // 0-100
 unsigned long lastStatusUpdate = 0;
-const long statusUpdateInterval = 1000;  // Update status every second
+const long statusUpdateInterval = 1000;  // Update status every second (changed from 60000)
+const long batteryUpdateInterval = 10000;  // Update battery every 10 seconds (changed from 300000)
+unsigned long lastBatteryUpdate = 0;
 
 // Forward declarations
 String createStatusJSON();
@@ -42,7 +43,6 @@ class MyServerCallbacks : public BLEServerCallbacks {
   }
 };
 
-// Callback class for handling incoming writes (commands) to the characteristic
 class MyCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
     String rxValue = pCharacteristic->getValue();
@@ -52,26 +52,32 @@ class MyCallbacks : public BLECharacteristicCallbacks {
       Serial.println(rxValue);
       
       String response = "";
+      bool shouldUpdateStatus = false;
       
       // Handle commands
       if (rxValue == "PLAY") {
         isPlaying = true;
         response = "Playing music";
+        shouldUpdateStatus = true;
       }
       else if (rxValue == "PAUSE") {
         isPlaying = false;
         response = "Music paused";
+        shouldUpdateStatus = true;
       }
       else if (rxValue == "VOLUME UP") {
         volumeLevel = min(100, volumeLevel + 5);
         response = "Volume increased to " + String(volumeLevel);
+        shouldUpdateStatus = true;
       }
       else if (rxValue == "VOLUME DOWN") {
         volumeLevel = max(0, volumeLevel - 5);
         response = "Volume decreased to " + String(volumeLevel);
+        shouldUpdateStatus = true;
       }
       else if (rxValue == "GET_STATUS") {
         response = createStatusJSON();
+        shouldUpdateStatus = true;
       }
       else {
         response = "Invalid command";
@@ -80,6 +86,11 @@ class MyCallbacks : public BLECharacteristicCallbacks {
       // Send the response back via the characteristic
       pCharacteristic->setValue(response);
       pCharacteristic->notify();
+      
+      // Send an immediate status update when values change
+      if (shouldUpdateStatus) {
+        sendStatusUpdate();
+      }
     }
   }
 };
@@ -154,14 +165,25 @@ void setup() {
 }
 
 void loop() {
-  // Simulate battery drain and signal strength changes
-  if (millis() - lastStatusUpdate >= statusUpdateInterval) {
-    batteryLevel = max(0, batteryLevel - 1);  // Decrease battery by 1% every second
+  // Update status more frequently
+  if (deviceConnected && (millis() - lastStatusUpdate >= statusUpdateInterval)) {
     signalStrength = random(80, 100);  // Simulate signal strength fluctuations
-    
-    // Send status update
     sendStatusUpdate();
     lastStatusUpdate = millis();
+  }
+
+  // Update battery more frequently with realistic drain
+  if (deviceConnected && (millis() - lastBatteryUpdate >= batteryUpdateInterval)) {
+    // Simulate more realistic battery drain
+    float drainAmount = 0.1;  // Base drain of 0.1% per 10 seconds
+    
+    if (isPlaying) {
+      drainAmount += 0.1;  // Additional drain when playing
+    }
+    
+    batteryLevel = max(0, batteryLevel - (int)drainAmount);
+    lastBatteryUpdate = millis();
+    sendStatusUpdate();  // Send immediate update when battery changes
   }
   
   delay(100);

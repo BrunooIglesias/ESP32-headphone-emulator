@@ -15,12 +15,10 @@ class BluetoothManager: NSObject, ObservableObject {
     private var commandCharacteristic: CBCharacteristic?
     private var statusCharacteristic: CBCharacteristic?
     
-    // Service and Characteristic UUIDs
     private let serviceUUID = CBUUID(string: "0000FFE0-0000-1000-8000-00805F9B34FB")
     private let commandUUID = CBUUID(string: "0000FFE1-0000-1000-8000-00805F9B34FB")
     private let statusUUID = CBUUID(string: "0000FFE2-0000-1000-8000-00805F9B34FB")
     
-    // Published properties
     @Published var discoveredDevices: [BluetoothDevice] = []
     @Published var isScanning = false
     @Published var connectionStatus = "Disconnected"
@@ -67,9 +65,6 @@ class BluetoothManager: NSObject, ObservableObject {
             return
         }
         
-        print("Attempting to connect to device: \(device.name)")
-        
-        // Find the peripheral in our discovered devices list
         if let index = discoveredDevices.firstIndex(where: { $0.id == device.id }),
            let peripheral = discoveredDevices[index].peripheral {
             print("Found peripheral, connecting...")
@@ -77,7 +72,6 @@ class BluetoothManager: NSObject, ObservableObject {
             centralManager.connect(peripheral, options: nil)
         } else {
             print("Error: Could not find peripheral for device")
-            // Try to find the peripheral again
             if let peripheral = device.peripheral {
                 print("Found peripheral in device, connecting...")
                 stopScanning()
@@ -162,15 +156,12 @@ extension BluetoothManager: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
         print("Discovered peripheral: \(peripheral.name ?? "Unknown")")
         
-        peripheral.delegate = self  // Set delegate immediately upon discovery
+        peripheral.delegate = self
         
-        // Check if we already have this device
         if let existingIndex = discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
-            // Update the existing device's RSSI and peripheral reference
             discoveredDevices[existingIndex].rssi = RSSI.intValue
             discoveredDevices[existingIndex].peripheral = peripheral
         } else {
-            // Create a new device
             let device = BluetoothDevice(
                 id: peripheral.identifier,
                 name: peripheral.name ?? "Unknown Device",
@@ -192,7 +183,6 @@ extension BluetoothManager: CBCentralManagerDelegate {
             discoveredDevices[index].isConnected = true
         }
         
-        // Discover services after connection
         peripheral.discoverServices([serviceUUID])
     }
     
@@ -215,7 +205,6 @@ extension BluetoothManager: CBCentralManagerDelegate {
             discoveredDevices[index].isConnected = false
         }
         
-        // Restart scanning
         if central.state == .poweredOn {
             startScanning()
         }

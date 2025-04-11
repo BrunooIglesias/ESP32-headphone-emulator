@@ -1,14 +1,10 @@
 import SwiftUI
 
-/// A view that displays the scanning state and discovered devices
 struct ScanningView: View {
-    // MARK: - Properties
     @ObservedObject var viewModel: HeadphoneViewModel
     
-    // MARK: - Body
     var body: some View {
         VStack(spacing: 20) {
-            // Scanning Status
             HStack {
                 Image(systemName: "wifi")
                     .foregroundColor(.blue)
@@ -19,7 +15,6 @@ struct ScanningView: View {
                     .font(.headline)
             }
             
-            // Device List
             if !viewModel.discoveredDevices.isEmpty {
                 ScrollView {
                     VStack(spacing: 10) {
@@ -33,7 +28,6 @@ struct ScanningView: View {
                 .frame(maxHeight: 200)
             }
             
-            // Scan Button
             Button(action: {
                 if viewModel.isScanning {
                     viewModel.stopScanning()
@@ -58,7 +52,6 @@ struct ScanningView: View {
     }
 }
 
-// MARK: - Supporting Views
 private struct DeviceRow: View {
     let device: BluetoothDevice
     let onConnect: () -> Void
@@ -97,7 +90,6 @@ private struct DeviceRow: View {
     }
 }
 
-// MARK: - Preview
 #Preview {
     let bluetoothManager = BluetoothManager()
     let viewModel = HeadphoneViewModel(bluetoothManager: bluetoothManager)

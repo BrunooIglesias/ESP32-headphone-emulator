@@ -7,26 +7,19 @@
 
 import SwiftUI
 
-/// The main view of the application that displays the headphone controls and status
 struct ContentView: View {
-    // MARK: - Properties
     @StateObject var viewModel: HeadphoneViewModel
     @State private var showSettings = false
     
-    // MARK: - Body
     var body: some View {
         ZStack {
-            // Background
             Color.black.edgesIgnoringSafeArea(.all)
             
-            // Main Content
             VStack(spacing: 30) {
-                // Header
                 Text("ESP32 Headphone")
                     .font(.system(size: 32, weight: .bold))
                     .foregroundColor(.white)
                 
-                // Device Status
                 DeviceStatusView(
                     connectionStatus: viewModel.connectionStatus,
                     batteryLevel: viewModel.batteryLevel,
@@ -34,15 +27,12 @@ struct ContentView: View {
                 )
                 
                 if viewModel.connectionStatus == "Connected" {
-                    // Controls
                     VStack(spacing: 20) {
-                        // Playback Controls
                         HStack(spacing: 20) {
                             GlassButton(title: "Play", action: { viewModel.sendCommand("PLAY") }, color: .green, icon: "play.fill")
                             GlassButton(title: "Pause", action: { viewModel.sendCommand("PAUSE") }, color: .blue, icon: "pause.fill")
                         }
                         
-                        // Volume Controls
                         HStack(spacing: 20) {
                             GlassButton(title: "Vol Up", action: { viewModel.sendCommand("VOLUME UP") }, color: .orange, icon: "speaker.wave.2.fill")
                             GlassButton(title: "Vol Down", action: { viewModel.sendCommand("VOLUME DOWN") }, color: .red, icon: "speaker.wave.1.fill")
@@ -50,12 +40,10 @@ struct ContentView: View {
                     }
                     .padding(.horizontal)
                     
-                    // Equalizer Visualization
                     EqualizerView(isPlaying: viewModel.isPlaying)
                         .frame(height: 100)
                         .padding()
                     
-                    // Response Message
                     if !viewModel.receivedMessage.isEmpty {
                         Text(viewModel.receivedMessage)
                             .font(.subheadline)
@@ -76,7 +64,6 @@ struct ContentView: View {
                 
                 Spacer()
                 
-                // Settings Button
                 Button(action: { showSettings.toggle() }) {
                     Image(systemName: "gear")
                         .font(.title2)
@@ -100,7 +87,6 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Preview
 #Preview {
     let bluetoothManager = BluetoothManager()
     let viewModel = HeadphoneViewModel(bluetoothManager: bluetoothManager)
