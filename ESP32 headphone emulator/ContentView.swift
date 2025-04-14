@@ -10,6 +10,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject var viewModel: HeadphoneViewModel
     @State private var showSettings = false
+    @State private var showMessage = false
     
     var body: some View {
         ZStack {
@@ -32,10 +33,6 @@ struct ContentView: View {
                     EqualizerView(isPlaying: viewModel.isPlaying)
                         .frame(height: 100)
                         .padding()
-                    
-                    if !viewModel.receivedMessage.isEmpty {
-                        ReceivedMessageView(message: viewModel.receivedMessage)
-                    }
                 } else {
                     ScanningView(viewModel: viewModel)
                 }
@@ -46,10 +43,31 @@ struct ContentView: View {
                     showSettings.toggle()
                 }
             }
-            .padding()
+            .padding(.top, 20)
+            .padding(.horizontal)
+            
+            if showMessage && !viewModel.receivedMessage.isEmpty {
+                VStack {
+                    Spacer()
+                    ReceivedMessageView(message: viewModel.receivedMessage)
+                        .padding(.bottom, 80)
+                        .padding(.horizontal)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .animation(.easeInOut, value: showMessage)
+                }
+            }
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
+        }
+        .onChange(of: viewModel.receivedMessage) { oldValue, newValue in
+            guard newValue != oldValue, !newValue.isEmpty else { return }
+            showMessage = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                withAnimation {
+                    showMessage = false
+                }
+            }
         }
     }
 }
