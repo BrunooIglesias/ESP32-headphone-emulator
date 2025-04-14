@@ -7,11 +7,9 @@
 #define CHARACTERISTIC_UUID "0000FFE1-0000-1000-8000-00805F9B34FB"
 #define STATUS_UUID        "0000FFE2-0000-1000-8000-00805F9B34FB"
 
-// Global pointers to BLE characteristics
 BLECharacteristic *pCommandCharacteristic;
 BLECharacteristic *pStatusCharacteristic;
 
-// Variables to track device state
 bool deviceConnected = false;
 bool isPlaying = false;
 int volumeLevel = 50;  // 0-100

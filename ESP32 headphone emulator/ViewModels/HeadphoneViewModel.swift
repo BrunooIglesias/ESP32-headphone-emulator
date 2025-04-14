@@ -87,10 +87,8 @@ class HeadphoneViewModel: ObservableObject {
     }
     
     private func startStatusUpdates() {
-        // Request initial status immediately
         requestStatus()
         
-        // Set up timer for periodic status updates
         statusUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.requestStatus()
         }
