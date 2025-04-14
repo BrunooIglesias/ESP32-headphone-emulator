@@ -40,10 +40,8 @@ class BluetoothManager: NSObject, ObservableObject {
         discoveredDevices.removeAll()
         isScanning = true
         print("Starting scan for devices...")
-        // Scan for all devices first, then filter by service
         centralManager.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
         
-        // After 2 seconds, switch to scanning for specific service
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             guard let self = self else { return }
             if self.isScanning {
