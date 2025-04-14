@@ -37,6 +37,24 @@ struct ContentView: View {
                             GlassButton(title: "Vol Up", action: { viewModel.sendCommand("VOLUME UP") }, color: .orange, icon: "speaker.wave.2.fill")
                             GlassButton(title: "Vol Down", action: { viewModel.sendCommand("VOLUME DOWN") }, color: .red, icon: "speaker.wave.1.fill")
                         }
+
+                        Button(action: { viewModel.disconnect() }) {
+                            HStack {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.red)
+                                Text("Disconnect")
+                                    .foregroundColor(.red)
+                            }
+                            .padding()
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.red.opacity(0.1))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                                    )
+                            )
+                        }
                     }
                     .padding(.horizontal)
                     
