@@ -11,6 +11,7 @@ struct ContentView: View {
     @StateObject var viewModel: HeadphoneViewModel
     @State private var showSettings = false
     @State private var showMessage = false
+    @State private var showDocumentTransfer = false
     
     var body: some View {
         ZStack {
@@ -23,8 +24,8 @@ struct ContentView: View {
                 
                 DeviceStatusView(
                     connectionStatus: viewModel.connectionStatus,
-                    batteryLevel: viewModel.batteryLevel,
-                    signalStrength: viewModel.signalStrength
+                    batteryLevel: Double(viewModel.batteryLevel),
+                    signalStrength: Double(viewModel.signalStrength)
                 )
                 
                 if viewModel.connectionStatus == "Connected" {
@@ -33,6 +34,24 @@ struct ContentView: View {
                     EqualizerView(isPlaying: viewModel.isPlaying)
                         .frame(height: 100)
                         .padding()
+                    
+                    Button(action: {
+                        showDocumentTransfer.toggle()
+                    }) {
+                        Text("Document Transfer")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding()
+                            .background(Color.blue)
+                            .cornerRadius(10)
+                    }
+                    .padding()
+                    
+                    if viewModel.isDocumentTransferInProgress {
+                        ProgressView(value: viewModel.documentTransferProgress)
+                            .progressViewStyle(LinearProgressViewStyle(tint: .blue))
+                            .padding()
+                    }
                 } else {
                     ScanningView(viewModel: viewModel)
                 }
@@ -60,6 +79,9 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
+        .sheet(isPresented: $showDocumentTransfer) {
+            DocumentTransferView(viewModel: viewModel)
+        }
         .onChange(of: viewModel.receivedMessage) { oldValue, newValue in
             guard newValue != oldValue, !newValue.isEmpty else { return }
             showMessage = true
@@ -68,6 +90,53 @@ struct ContentView: View {
                     showMessage = false
                 }
             }
+        }
+    }
+}
+
+struct DocumentTransferView: View {
+    @ObservedObject var viewModel: HeadphoneViewModel
+    @Environment(\.presentationMode) var presentationMode
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                if viewModel.isDocumentTransferInProgress {
+                    ProgressView(value: viewModel.documentTransferProgress)
+                        .progressViewStyle(LinearProgressViewStyle(tint: .blue))
+                        .padding()
+                    
+                    Text("Transferring document... \(Int(viewModel.documentTransferProgress * 100))%")
+                        .foregroundColor(.gray)
+                } else {
+                    Button(action: {
+                        viewModel.startDocumentTransfer()
+                    }) {
+                        Text("Start Document Transfer")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding()
+                            .background(Color.blue)
+                            .cornerRadius(10)
+                    }
+                    
+                    Button(action: {
+                        viewModel.endDocumentTransfer()
+                    }) {
+                        Text("End Document Transfer")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding()
+                            .background(Color.red)
+                            .cornerRadius(10)
+                    }
+                }
+            }
+            .padding()
+            .navigationTitle("Document Transfer")
+            .navigationBarItems(trailing: Button("Close") {
+                presentationMode.wrappedValue.dismiss()
+            })
         }
     }
 }

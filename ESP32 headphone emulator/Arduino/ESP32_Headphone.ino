@@ -6,9 +6,11 @@
 #define SERVICE_UUID        "0000FFE0-0000-1000-8000-00805F9B34FB"
 #define CHARACTERISTIC_UUID "0000FFE1-0000-1000-8000-00805F9B34FB"
 #define STATUS_UUID        "0000FFE2-0000-1000-8000-00805F9B34FB"
+#define DOCUMENT_UUID      "0000FFE3-0000-1000-8000-00805F9B34FB"
 
 BLECharacteristic *pCommandCharacteristic;
 BLECharacteristic *pStatusCharacteristic;
+BLECharacteristic *pDocumentCharacteristic;
 
 bool deviceConnected = false;
 bool isPlaying = false;
@@ -19,6 +21,10 @@ unsigned long lastStatusUpdate = 0;
 const long statusUpdateInterval = 1000;  // Update status every second (changed from 60000)
 const long batteryUpdateInterval = 10000;  // Update battery every 10 seconds (changed from 300000)
 unsigned long lastBatteryUpdate = 0;
+
+// Add document buffer
+String documentBuffer = "";
+bool isDocumentTransferInProgress = false;
 
 // Forward declarations
 String createStatusJSON();
@@ -93,6 +99,51 @@ class MyCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
+// Add new callback class for document handling
+class DocumentCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    String rxValue = pCharacteristic->getValue();
+    
+    if (rxValue.length() > 0) {
+      Serial.print("Received Document Chunk: ");
+      Serial.println(rxValue);
+      
+      if (rxValue == "START_DOCUMENT") {
+        Serial.println("Starting document transfer");
+        documentBuffer = "";
+        isDocumentTransferInProgress = true;
+        pCharacteristic->setValue("Document transfer started");
+        pCharacteristic->notify();
+        Serial.println("Sent: Document transfer started");
+      }
+      else if (rxValue == "END_DOCUMENT") {
+        Serial.println("Ending document transfer");
+        isDocumentTransferInProgress = false;
+        pCharacteristic->setValue("Document transfer completed");
+        pCharacteristic->notify();
+        Serial.println("Sent: Document transfer completed");
+        Serial.print("📄 Final document size: ");
+        Serial.println(documentBuffer.length());
+        Serial.println("📄 Document content:");
+        Serial.println(documentBuffer);
+        // Here you could save the document to SPIFFS if needed
+      }
+      else if (isDocumentTransferInProgress) {
+        Serial.print("Received chunk of size: ");
+        Serial.println(rxValue.length());
+        documentBuffer += rxValue;
+        Serial.print("Current document size: ");
+        Serial.println(documentBuffer.length());
+        // Send acknowledgment
+        pCharacteristic->setValue("Chunk received");
+        pCharacteristic->notify();
+        Serial.println("Sent: Chunk received");
+        delay(10); // Small delay to ensure notification is sent
+      }
+    }
+  }
+};
+
 // Function implementations
 String createStatusJSON() {
   return "{\"playing\":" + String(isPlaying ? "true" : "false") +
@@ -107,6 +158,33 @@ void sendStatusUpdate() {
     pStatusCharacteristic->setValue(status);
     pStatusCharacteristic->notify();
   }
+}
+
+// Add document sending function with chunking
+void sendDocumentChunk(String chunk) {
+  if (deviceConnected) {
+    Serial.print("Sending document chunk of size: ");
+    Serial.println(chunk.length());
+    // Split large chunks if needed
+    const int maxChunkSize = 20; // Maximum chunk size
+    for (int i = 0; i < chunk.length(); i += maxChunkSize) {
+      int endIndex = (i + maxChunkSize) > chunk.length() ? chunk.length() : (i + maxChunkSize);
+      String subChunk = chunk.substring(i, endIndex);
+      Serial.print("Sending sub-chunk of size: ");
+      Serial.println(subChunk.length());
+      pDocumentCharacteristic->setValue(subChunk);
+      pDocumentCharacteristic->notify();
+      Serial.println("Sent sub-chunk");
+      delay(10); // Small delay to ensure notification is sent
+    }
+  } else {
+    Serial.println("Cannot send document chunk: device not connected");
+  }
+}
+
+// Add document reading function
+String getDocument() {
+  return documentBuffer;
 }
 
 void setup() {
@@ -143,6 +221,18 @@ void setup() {
                     );
   pStatusCharacteristic->addDescriptor(new BLE2902());
   pStatusCharacteristic->setValue(createStatusJSON());
+
+  // Create document characteristic
+  pDocumentCharacteristic = pService->createCharacteristic(
+                      DOCUMENT_UUID,
+                      BLECharacteristic::PROPERTY_READ   |
+                      BLECharacteristic::PROPERTY_WRITE  |
+                      BLECharacteristic::PROPERTY_NOTIFY |
+                      BLECharacteristic::PROPERTY_INDICATE
+                    );
+  pDocumentCharacteristic->addDescriptor(new BLE2902());
+  pDocumentCharacteristic->setCallbacks(new DocumentCallbacks());
+  pDocumentCharacteristic->setValue("Document Ready");
 
   // Start the BLE service
   pService->start();

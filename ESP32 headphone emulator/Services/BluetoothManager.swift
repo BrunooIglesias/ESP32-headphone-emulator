@@ -14,10 +14,12 @@ class BluetoothManager: NSObject, ObservableObject {
     private var connectedPeripheral: CBPeripheral?
     private var commandCharacteristic: CBCharacteristic?
     private var statusCharacteristic: CBCharacteristic?
+    private var documentCharacteristic: CBCharacteristic?
     
     private let serviceUUID = CBUUID(string: "0000FFE0-0000-1000-8000-00805F9B34FB")
     private let commandUUID = CBUUID(string: "0000FFE1-0000-1000-8000-00805F9B34FB")
     private let statusUUID = CBUUID(string: "0000FFE2-0000-1000-8000-00805F9B34FB")
+    private let documentUUID = CBUUID(string: "0000FFE3-0000-1000-8000-00805F9B34FB")
     
     @Published var discoveredDevices: [BluetoothDevice] = []
     @Published var isScanning = false
@@ -25,6 +27,11 @@ class BluetoothManager: NSObject, ObservableObject {
     @Published var deviceStatus: DeviceStatus?
     @Published var receivedMessage = ""
     @Published var isBluetoothAvailable = false
+    @Published var documentData = Data()
+    @Published var isDocumentTransferInProgress = false
+    @Published var documentTransferProgress: Float = 0.0
+    
+    private var documentBuffer = Data()
     
     override init() {
         super.init()
@@ -105,6 +112,58 @@ class BluetoothManager: NSObject, ObservableObject {
         let data = "GET_STATUS".data(using: .utf8)!
         peripheral.writeValue(data, for: characteristic, type: .withResponse)
     }
+    
+    func startDocumentTransfer() {
+        guard let peripheral = connectedPeripheral,
+              let characteristic = documentCharacteristic else { 
+            print("Cannot start document transfer: peripheral or characteristic not available")
+            return 
+        }
+        print("Starting document transfer...")
+        peripheral.writeValue("START_DOCUMENT".data(using: .utf8)!, for: characteristic, type: .withResponse)
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.sendDocumentData()
+        }
+    }
+    
+    private func sendDocumentData() {
+        guard let peripheral = connectedPeripheral,
+              let characteristic = documentCharacteristic else { return }
+        
+        let documentText = """
+        This is a sample document that will be transferred over Bluetooth.
+        It contains multiple lines of text to demonstrate the transfer functionality.
+        The document will be sent in chunks to ensure reliable transmission.
+        Each chunk will be acknowledged by the ESP32 before sending the next one.
+        """
+        
+        let chunkSize = 20
+        let chunks = stride(from: 0, to: documentText.count, by: chunkSize).map {
+            let start = documentText.index(documentText.startIndex, offsetBy: $0)
+            let end = documentText.index(start, offsetBy: min(chunkSize, documentText.count - $0), limitedBy: documentText.endIndex) ?? documentText.endIndex
+            return String(documentText[start..<end])
+        }
+        
+        for chunk in chunks {
+            print("Sending chunk: \(chunk)")
+            peripheral.writeValue(chunk.data(using: .utf8)!, for: characteristic, type: .withResponse)
+            
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        
+        endDocumentTransfer()
+    }
+
+    func endDocumentTransfer() {
+        guard let peripheral = connectedPeripheral,
+              let characteristic = documentCharacteristic else { 
+            print("Cannot end document transfer: peripheral or characteristic not available")
+            return 
+        }
+        print("Ending document transfer...")
+        peripheral.writeValue("END_DOCUMENT".data(using: .utf8)!, for: characteristic, type: .withResponse)
+    }
 }
 
 extension BluetoothManager: CBCentralManagerDelegate {
@@ -152,7 +211,6 @@ extension BluetoothManager: CBCentralManagerDelegate {
     }
     
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
-        print("Discovered peripheral: \(peripheral.name ?? "Unknown")")
         
         peripheral.delegate = self
         
@@ -196,6 +254,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
         connectedPeripheral = nil
         commandCharacteristic = nil
         statusCharacteristic = nil
+        documentCharacteristic = nil
         connectionStatus = "Disconnected"
         deviceStatus = nil
         
@@ -220,7 +279,7 @@ extension BluetoothManager: CBPeripheralDelegate {
         
         for service in services {
             if service.uuid == serviceUUID {
-                peripheral.discoverCharacteristics([commandUUID, statusUUID], for: service)
+                peripheral.discoverCharacteristics([commandUUID, statusUUID, documentUUID], for: service)
             }
         }
     }
@@ -240,6 +299,9 @@ extension BluetoothManager: CBPeripheralDelegate {
             } else if characteristic.uuid == statusUUID {
                 statusCharacteristic = characteristic
                 peripheral.setNotifyValue(true, for: characteristic)
+            } else if characteristic.uuid == documentUUID {
+                documentCharacteristic = characteristic
+                peripheral.setNotifyValue(true, for: characteristic)
             }
         }
     }
@@ -250,13 +312,16 @@ extension BluetoothManager: CBPeripheralDelegate {
             return
         }
         
-        if let data = characteristic.value,
-           let message = String(data: data, encoding: .utf8) {
-            receivedMessage = message
-            
-            if characteristic.uuid == statusUUID {
-                if let statusData = try? JSONDecoder().decode(DeviceStatus.self, from: data) {
-                    deviceStatus = statusData
+        if let data = characteristic.value {
+            if characteristic.uuid == documentUUID {
+                handleDocumentData(data)
+            } else if let message = String(data: data, encoding: .utf8) {
+                receivedMessage = message
+                
+                if characteristic.uuid == statusUUID {
+                    if let statusData = try? JSONDecoder().decode(DeviceStatus.self, from: data) {
+                        deviceStatus = statusData
+                    }
                 }
             }
         }
@@ -266,6 +331,66 @@ extension BluetoothManager: CBPeripheralDelegate {
         guard error == nil else {
             print("Error setting notification state: \(error!.localizedDescription)")
             return
+        }
+    }
+    
+    private func handleDocumentData(_ data: Data) {
+        print("Received data of size: \(data.count) bytes")
+        
+        if let message = String(data: data, encoding: .utf8) {
+            print("Received message: \(message)")
+            
+            if message == "Document transfer started" {
+                print("Document transfer started")
+                documentBuffer = Data()
+                isDocumentTransferInProgress = true
+                documentTransferProgress = 0.0
+            } else if message == "Document transfer completed" {
+                print("Document transfer completed")
+                documentData = documentBuffer
+                isDocumentTransferInProgress = false
+                documentTransferProgress = 1.0
+                saveDocument()
+            } else if message == "Chunk received" {
+                print("Chunk acknowledged")
+                
+                if let peripheral = connectedPeripheral,
+                   let characteristic = documentCharacteristic {
+                    peripheral.writeValue("ACK".data(using: .utf8)!, for: characteristic, type: .withResponse)
+                }
+            } else {
+                print("Received document chunk of size: \(data.count) bytes")
+                documentBuffer.append(data)
+                let maxExpectedSize: Float = 1024 * 1024 // 1MB
+                let newProgress = min(1.0, Float(documentBuffer.count) / maxExpectedSize)
+                if newProgress != documentTransferProgress {
+                    documentTransferProgress = newProgress
+                    print("Document transfer progress: \(Int(documentTransferProgress * 100))% (Buffer size: \(documentBuffer.count) bytes)")
+                }
+            }
+        } else {
+            print("Received binary chunk of size: \(data.count) bytes")
+            documentBuffer.append(data)
+
+            let maxExpectedSize: Float = 1024 * 1024
+            let newProgress = min(1.0, Float(documentBuffer.count) / maxExpectedSize)
+            if newProgress != documentTransferProgress {
+                documentTransferProgress = newProgress
+                print("Document transfer progress: \(Int(documentTransferProgress * 100))% (Buffer size: \(documentBuffer.count) bytes)")
+            }
+        }
+    }
+    
+    private func saveDocument() {
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let fileName = "received_document_\(Date().timeIntervalSince1970).txt"
+        let fileURL = documentsDirectory.appendingPathComponent(fileName)
+        
+        do {
+            try documentData.write(to: fileURL)
+            print("Document saved successfully at: \(fileURL.path)")
+        } catch {
+            print("Error saving document: \(error.localizedDescription)")
         }
     }
 }
