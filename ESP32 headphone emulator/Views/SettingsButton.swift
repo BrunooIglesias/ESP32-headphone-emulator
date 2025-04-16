@@ -9,22 +9,25 @@ import SwiftUI
 
 struct SettingsButton: View {
     var action: () -> Void
-
+    @State private var isPressed = false
+    
     var body: some View {
         Button(action: action) {
             Image(systemName: "gear")
-                .font(.title2)
+                .font(.system(size: 22, weight: .medium))
                 .foregroundColor(.white)
-                .padding()
+                .frame(width: 44, height: 44)
                 .background(
                     Circle()
-                        .fill(Color.black.opacity(0.3))
+                        .fill(.ultraThinMaterial)
                         .overlay(
                             Circle()
-                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                                .stroke(.white.opacity(0.2), lineWidth: 1)
                         )
                 )
+                .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
         }
+        .buttonStyle(ScaleButtonStyle())
     }
 }
 
@@ -32,4 +35,6 @@ struct SettingsButton: View {
     SettingsButton {
         print("Settings tapped")
     }
+    .padding()
+    .background(Color.black)
 }
