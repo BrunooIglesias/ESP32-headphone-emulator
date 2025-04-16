@@ -112,6 +112,25 @@ class MyCallbacks : public BLECharacteristicCallbacks {
 };
 
 class GaiaCallbacks: public BLECharacteristicCallbacks {
+private:
+    const char* HARDCODED_DOCUMENT = R"(
+ESP32 Headphone Device Information
+--------------------------------
+Device Name: ESP32 Headphone
+Firmware Version: 1.0.0
+Hardware Version: 1.0
+Bluetooth Version: 4.2
+Battery Type: Li-ion
+Battery Capacity: 1000mAh
+Audio Codec: SBC
+Supported Profiles: A2DP, AVRCP
+Equalizer Presets: 5
+Max Volume: 100
+Current Status: Connected
+Last Update: 2024-04-16
+)";
+
+public:
     void onWrite(BLECharacteristic *pCharacteristic) {
         String value = pCharacteristic->getValue();
         
@@ -134,8 +153,12 @@ class GaiaCallbacks: public BLECharacteristicCallbacks {
                 Serial.print(", Payload length: ");
                 Serial.println(payloadLength);
                 
-                if (command == 0x46 && length >= 8) { // Start file transfer
-                    handleFileTransferStart(data + 4, payloadLength);
+                if (command == 0x46) { // Start file/document transfer
+                    if (length >= 5 && data[4] == 0x02) { // Document type
+                        sendDocument();
+                    } else {
+                        handleFileTransferStart(data + 4, payloadLength);
+                    }
                 }
                 else if (command == 0x47 && length > 4) { // File chunk
                     if (!fileTransferInProgress) {
@@ -262,6 +285,45 @@ class GaiaCallbacks: public BLECharacteristicCallbacks {
         Serial.print(command, HEX);
         Serial.print(", status=0x");
         Serial.println(status, HEX);
+    }
+
+    void sendDocument() {
+        size_t documentLength = strlen(HARDCODED_DOCUMENT);
+        
+        // Send document in chunks using GAIA command 0x47
+        const size_t CHUNK_SIZE = 12; // GAIA payload size
+        size_t offset = 0;
+        
+        while (offset < documentLength) {
+            size_t chunkSize = min(CHUNK_SIZE, documentLength - offset);
+            uint8_t* chunk = (uint8_t*)malloc(chunkSize);
+            if (chunk) {
+                memcpy(chunk, HARDCODED_DOCUMENT + offset, chunkSize);
+                
+                // Create GAIA command for chunk (0x47)
+                uint8_t* packet = (uint8_t*)malloc(chunkSize + 4);
+                if (packet) {
+                    packet[0] = 0x10; // GAIA header
+                    packet[1] = 0x47; // Chunk command
+                    packet[2] = chunkSize & 0xFF; // Length LSB
+                    packet[3] = (chunkSize >> 8) & 0xFF; // Length MSB
+                    memcpy(packet + 4, chunk, chunkSize);
+                    
+                    pGaiaDataCharacteristic->setValue(packet, chunkSize + 4);
+                    pGaiaDataCharacteristic->notify();
+                    
+                    free(packet);
+                }
+                free(chunk);
+            }
+            offset += chunkSize;
+            delay(10); // Small delay between chunks
+        }
+        
+        // Send completion response
+        uint8_t response[5] = {0x10, 0x46, 0x01, 0x00, 0x00}; // Success
+        pGaiaResponseCharacteristic->setValue(response, 5);
+        pGaiaResponseCharacteristic->notify();
     }
 };
 

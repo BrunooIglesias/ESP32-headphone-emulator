@@ -61,20 +61,36 @@ extension BluetoothManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral,
                     didUpdateValueFor characteristic: CBCharacteristic,
                     error: Error?) {
-        guard error == nil, let data = characteristic.value else {
-            print("Error updating value for \(characteristic.uuid): \(error?.localizedDescription ?? "unknown")")
+        guard error == nil else {
+            print("Error updating value for characteristic: \(error!.localizedDescription)")
             return
         }
-        if characteristic.uuid == BluetoothConstants.gaiaResponseUUID {
-            handleGaiaResponse(data)
-        } else if characteristic.uuid == BluetoothConstants.documentUUID {
-            handleDocumentData(data)
-        } else if let message = String(data: data, encoding: .utf8) {
-            receivedMessage = message
-            if characteristic.uuid == BluetoothConstants.statusUUID,
-               let statusData = try? JSONDecoder().decode(DeviceStatus.self, from: data) {
-                deviceStatus = statusData
+        
+        guard let data = characteristic.value else { return }
+        
+        if characteristic == gaiaDataCharacteristic {
+            if data.count >= 4 {
+                let command = data[1]
+                let payloadLength = (UInt16(data[3]) << 8) | UInt16(data[2])
+                
+                if command == 0x47 {
+                    let payload = data.subdata(in: 4..<data.count)
+                    if let chunk = String(data: payload, encoding: .utf8) {
+                        DispatchQueue.main.async {
+                            if self.receivedDocument == nil {
+                                self.receivedDocument = ""
+                            }
+                            self.receivedDocument? += chunk
+                            print("Received document chunk: \(chunk)")
+                        }
+                    }
+                }
             }
+        } else if characteristic == gaiaResponseCharacteristic {
+            handleGaiaResponse(data)
+        } else if characteristic == statusCharacteristic,
+                  let statusData = try? JSONDecoder().decode(DeviceStatus.self, from: data) {
+            deviceStatus = statusData
         }
     }
     
@@ -88,7 +104,7 @@ extension BluetoothManager: CBPeripheralDelegate {
     
     // MARK: - Document Data Handling
     
-    private func handleDocumentData(_ data: Data) {
+    private func handleReceivedDocument(_ data: Data) {
         print("Document data received: \(data.count) bytes")
         if let message = String(data: data, encoding: .utf8) {
             switch message {

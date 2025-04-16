@@ -51,6 +51,22 @@ struct ContentView: View {
                     }
                     .padding(.horizontal)
                     
+                    Button(action: {
+                        viewModel.requestDocument()
+                    }) {
+                        VStack {
+                            Image(systemName: "doc.text.fill")
+                                .font(.system(size: 24))
+                            Text("Receive Document")
+                                .font(.headline)
+                        }
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.blue)
+                        .cornerRadius(10)
+                    }
+                    .padding(.horizontal)
+                    
                     if viewModel.isFileTransferInProgress {
                         VStack {
                             ProgressView(value: viewModel.fileTransferProgress)
@@ -89,6 +105,11 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
+        }
+        .sheet(isPresented: $viewModel.showReceivedDocument) {
+            if let document = viewModel.receivedDocument {
+                DocumentViewer(document: document)
+            }
         }
         .fileImporter(
             isPresented: $showFilePicker,

@@ -25,6 +25,7 @@ final class BluetoothManager: NSObject, ObservableObject {
     @Published var isFileTransferInProgress = false
     @Published var fileTransferProgress: Float = 0.0
     @Published var currentFileType: FileType = .unknown
+    @Published var receivedDocument: String? = nil
     
     // MARK: - Private Properties
     private var centralManager: CBCentralManager!
@@ -113,15 +114,25 @@ final class BluetoothManager: NSObject, ObservableObject {
     }
     
     func sendCommand(_ command: String) {
-        guard centralManager.state == .poweredOn,
-              let peripheral = connectedPeripheral,
-              let characteristic = commandCharacteristic else { return }
+        guard let peripheral = connectedPeripheral,
+              let commandCharacteristic = commandCharacteristic else { return }
+        
         let data = command.data(using: .utf8)!
-        peripheral.writeValue(data, for: characteristic, type: .withResponse)
+        peripheral.writeValue(data, for: commandCharacteristic, type: .withResponse)
     }
     
     func requestStatus() {
         sendCommand("GET_STATUS")
+    }
+    
+    func requestDocument() {
+        guard let peripheral = connectedPeripheral,
+              let characteristic = gaiaCommandCharacteristic else { return }
+        
+        let command = createGaiaCommand(command: 0x46, payload: Data([0x02]))
+        commandQueue.async { [weak self] in
+            self?.sendGaiaCommand(command, characteristic: characteristic)
+        }
     }
     
     // MARK: - Document Transfer Methods

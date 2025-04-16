@@ -24,6 +24,8 @@ class HeadphoneViewModel: ObservableObject {
     @Published var isFileTransferInProgress: Bool = false
     @Published var fileTransferProgress: Float = 0.0
     @Published var currentFileType: BluetoothManager.FileType = .unknown
+    @Published var receivedDocument: String? = nil
+    @Published var showReceivedDocument: Bool = false
     
     private var cancellables = Set<AnyCancellable>()
     
@@ -59,6 +61,17 @@ class HeadphoneViewModel: ObservableObject {
                 self?.signalStrength = Double(status.signal) / 100.0
             }
             .store(in: &cancellables)
+        
+        bluetoothManager.$currentFileType
+            .assign(to: &$currentFileType)
+            
+        bluetoothManager.$receivedDocument
+            .compactMap { $0 }
+            .sink { [weak self] document in
+                self?.receivedDocument = document
+                self?.showReceivedDocument = true
+            }
+            .store(in: &cancellables)
     }
     
     private func setupBindings() {
@@ -67,9 +80,6 @@ class HeadphoneViewModel: ObservableObject {
             
         bluetoothManager.$fileTransferProgress
             .assign(to: &$fileTransferProgress)
-            
-        bluetoothManager.$currentFileType
-            .assign(to: &$currentFileType)
     }
     
     func startScanning() {
@@ -113,6 +123,10 @@ class HeadphoneViewModel: ObservableObject {
     
     func sendFile(_ fileData: Data, fileName: String) {
         bluetoothManager.sendFile(fileData, fileName: fileName)
+    }
+    
+    func requestDocument() {
+        bluetoothManager.requestDocument()
     }
     
     deinit {
