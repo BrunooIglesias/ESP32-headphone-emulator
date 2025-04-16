@@ -11,8 +11,7 @@ struct ContentView: View {
     @StateObject var viewModel: HeadphoneViewModel
     @State private var showSettings = false
     @State private var showMessage = false
-    @State private var showDocumentTransfer = false
-    @State private var showImageTransfer = false
+    @State private var showFilePicker = false
     
     var body: some View {
         ZStack {
@@ -25,8 +24,8 @@ struct ContentView: View {
                 
                 DeviceStatusView(
                     connectionStatus: viewModel.connectionStatus,
-                    batteryLevel: Double(viewModel.batteryLevel),
-                    signalStrength: Double(viewModel.signalStrength)
+                    batteryLevel: viewModel.batteryLevel,
+                    signalStrength: viewModel.signalStrength
                 )
                 
                 if viewModel.connectionStatus == "Connected" {
@@ -36,32 +35,31 @@ struct ContentView: View {
                         .frame(height: 100)
                         .padding()
                     
-                    HStack(spacing: 20) {
-                        DocumentTransferButton(viewModel: viewModel)
-                        
-                        Button(action: {
-                            showImageTransfer.toggle()
-                        }) {
-                            VStack {
-                                Image(systemName: "photo.fill")
-                                    .font(.system(size: 24))
-                                Text("Send Image")
-                                    .font(.headline)
-                            }
-                            .foregroundColor(.white)
-                            .padding()
-                            .background(Color.purple)
-                            .cornerRadius(10)
+                    Button(action: {
+                        showFilePicker.toggle()
+                    }) {
+                        VStack {
+                            Image(systemName: "doc.fill")
+                                .font(.system(size: 24))
+                            Text("Send File")
+                                .font(.headline)
                         }
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.purple)
+                        .cornerRadius(10)
                     }
                     .padding(.horizontal)
                     
-                    if viewModel.isImageTransferInProgress {
+                    if viewModel.isFileTransferInProgress {
                         VStack {
-                            ProgressView(value: viewModel.imageTransferProgress)
+                            ProgressView(value: viewModel.fileTransferProgress)
                                 .progressViewStyle(LinearProgressViewStyle(tint: .purple))
-                            Text("\(Int(viewModel.imageTransferProgress * 100))%")
+                            Text("\(Int(viewModel.fileTransferProgress * 100))%")
                                 .foregroundColor(.white)
+                            Text("Transferring \(viewModel.currentFileType == .image ? "Image" : "Document")")
+                                .foregroundColor(.white)
+                                .font(.caption)
                         }
                         .padding()
                     }
@@ -92,11 +90,35 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
-        .sheet(isPresented: $showDocumentTransfer) {
-            DocumentTransferView(viewModel: viewModel)
-        }
-        .sheet(isPresented: $showImageTransfer) {
-            ImageTransferView(viewModel: viewModel)
+        .fileImporter(
+            isPresented: $showFilePicker,
+            allowedContentTypes: [.image, .text, .pdf, .data],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                
+                guard url.startAccessingSecurityScopedResource() else {
+                    print("Failed to access security-scoped resource")
+                    return
+                }
+                
+                defer {
+                    url.stopAccessingSecurityScopedResource()
+                }
+                
+                do {
+                    let data = try Data(contentsOf: url)
+                    let fileName = url.lastPathComponent
+                    
+                    viewModel.sendFile(data, fileName: fileName)
+                } catch {
+                    print("Error reading file: \(error.localizedDescription)")
+                }
+            case .failure(let error):
+                print("Error selecting file: \(error.localizedDescription)")
+            }
         }
         .onChange(of: viewModel.receivedMessage) { oldValue, newValue in
             guard newValue != oldValue, !newValue.isEmpty else { return }

@@ -21,7 +21,6 @@ class BluetoothManager: NSObject, ObservableObject {
     private let statusUUID = CBUUID(string: "0000FFE2-0000-1000-8000-00805F9B34FB")
     private let documentUUID = CBUUID(string: "0000FFE3-0000-1000-8000-00805F9B34FB")
     
-    // GAIA Protocol Constants
     private let gaiaServiceUUID = CBUUID(string: "00001100-D102-11E1-9B23-00025B00A5A5")
     private let gaiaCommandUUID = CBUUID(string: "00001101-D102-11E1-9B23-00025B00A5A5")
     private let gaiaResponseUUID = CBUUID(string: "00001102-D102-11E1-9B23-00025B00A5A5")
@@ -49,6 +48,9 @@ class BluetoothManager: NSObject, ObservableObject {
     @Published var documentTransferProgress: Float = 0.0
     @Published var isImageTransferInProgress = false
     @Published var imageTransferProgress: Float = 0.0
+    @Published var isFileTransferInProgress = false
+    @Published var fileTransferProgress: Float = 0.0
+    @Published var currentFileType: FileType = .unknown
     
     private var documentBuffer = Data()
     
@@ -56,6 +58,16 @@ class BluetoothManager: NSObject, ObservableObject {
     private var currentCommand: Data?
     private var isWaitingForResponse = false
     private let maxChunkSize = 512
+    
+    enum FileType {
+        case image
+        case document
+        case unknown
+    }
+    
+    private var fileChunks: [Data] = []
+    private var currentFileData: Data?
+    private var currentFileName: String?
     
     override init() {
         super.init()
@@ -261,36 +273,43 @@ class BluetoothManager: NSObject, ObservableObject {
         switch command {
         case 0x46:
             if status == 0x00 {
-                print("Image transfer start acknowledged successfully")
-                imageTransferProgress = 0.0
-                sendNextImageChunk()
+                print("File transfer start acknowledged successfully")
+                fileTransferProgress = 0.0
+                sendNextFileChunk()
             } else {
-                print("Failed to start image transfer. Status: \(status)")
-                imageTransferInProgress = false
-                imageChunks.removeAll()
+                print("Failed to start file transfer. Status: \(status)")
+                isFileTransferInProgress = false
+                fileChunks.removeAll()
                 currentChunkIndex = 0
+                currentFileData = nil
+                currentFileName = nil
             }
             
         case 0x47:
             if status == 0x00 {
                 currentChunkIndex += 1
-                imageTransferProgress = Float(currentChunkIndex) / Float(imageChunks.count)
-                print("Chunk \(currentChunkIndex)/\(imageChunks.count) acknowledged")
+                fileTransferProgress = Float(currentChunkIndex) / Float(fileChunks.count)
+                print("Chunk \(currentChunkIndex)/\(fileChunks.count) acknowledged")
                 
-                if currentChunkIndex < imageChunks.count {
-                    sendNextImageChunk()
+                if currentChunkIndex < fileChunks.count {
+                    sendNextFileChunk()
                 } else {
-                    imageTransferInProgress = false
-                    imageTransferProgress = 1.0
-                    imageChunks.removeAll()
+                    isFileTransferInProgress = false
+                    fileTransferProgress = 1.0
+                    saveTransferredFile()
+                    fileChunks.removeAll()
                     currentChunkIndex = 0
-                    print("Image transfer completed successfully")
+                    currentFileData = nil
+                    currentFileName = nil
+                    print("File transfer completed successfully")
                 }
             } else {
-                print("Failed to send image chunk. Status: \(status)")
-                imageTransferInProgress = false
-                imageChunks.removeAll()
+                print("Failed to send file chunk. Status: \(status)")
+                isFileTransferInProgress = false
+                fileChunks.removeAll()
                 currentChunkIndex = 0
+                currentFileData = nil
+                currentFileName = nil
             }
             
         default:
@@ -325,6 +344,99 @@ class BluetoothManager: NSObject, ObservableObject {
         }
         packet.append(payload)
         return packet
+    }
+    
+    func sendFile(_ fileData: Data, fileName: String) {
+        guard let peripheral = connectedPeripheral,
+              let characteristic = gaiaCommandCharacteristic else {
+            print("Cannot send file: peripheral or characteristic not available")
+            return
+        }
+        
+        let fileType: FileType
+        if fileName.lowercased().hasSuffix(".jpg") || fileName.lowercased().hasSuffix(".jpeg") || 
+           fileName.lowercased().hasSuffix(".png") {
+            fileType = .image
+        } else {
+            fileType = .document
+        }
+        
+        print("Starting \(fileType) transfer with size: \(fileData.count) bytes")
+        
+        currentFileData = fileData
+        currentFileName = fileName
+        currentFileType = fileType
+        
+        fileChunks = prepareFileChunks(fileData)
+        currentChunkIndex = 0
+        isFileTransferInProgress = true
+        
+        var fileInfo = Data()
+        fileInfo.append(fileType == .image ? 0x01 : 0x02)
+        fileInfo.append(UInt8(fileName.count))
+        fileInfo.append(contentsOf: fileName.utf8)
+        
+        var sizeBytes = UInt32(fileData.count).littleEndian
+        fileInfo.append(contentsOf: withUnsafeBytes(of: sizeBytes) { Data($0) })
+        
+        let startCommand = createGaiaCommand(command: 0x46, payload: fileInfo)
+        print("Sending start command (0x46) with file info")
+        
+        commandQueue.async { [weak self] in
+            self?.sendCommand(startCommand, characteristic: characteristic)
+        }
+    }
+    
+    private func prepareFileChunks(_ data: Data) -> [Data] {
+        var chunks: [Data] = []
+        let chunkSize = maxGaiaPayloadSize
+        
+        var offset = 0
+        while offset < data.count {
+            let length = min(chunkSize, data.count - offset)
+            let chunk = data[offset..<(offset + length)]
+            chunks.append(Data(chunk))
+            offset += length
+        }
+        
+        print("Prepared \(chunks.count) chunks of size \(chunkSize) bytes each")
+        return chunks
+    }
+    
+    private func sendNextFileChunk() {
+        guard isFileTransferInProgress,
+              currentChunkIndex < fileChunks.count,
+              let peripheral = connectedPeripheral,
+              let characteristic = gaiaDataCharacteristic else {
+            print("Cannot send next chunk: transfer not in progress or invalid state")
+            return
+        }
+        
+        let chunk = fileChunks[currentChunkIndex]
+        let chunkCommand = createGaiaCommand(command: 0x47, payload: chunk)
+        print("Sending chunk \(currentChunkIndex + 1)/\(fileChunks.count) of size: \(chunk.count) bytes")
+        
+        commandQueue.async { [weak self] in
+            self?.sendCommand(chunkCommand, characteristic: characteristic)
+        }
+    }
+    
+    private func saveTransferredFile() {
+        guard let fileData = currentFileData,
+              let fileName = currentFileName else {
+            print("No file data to save")
+            return
+        }
+        
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let fileURL = documentsDirectory.appendingPathComponent(fileName)
+        
+        do {
+            try fileData.write(to: fileURL)
+            print("File saved successfully at: \(fileURL.path)")
+        } catch {
+            print("Error saving file: \(error.localizedDescription)")
+        }
     }
 }
 
@@ -535,7 +647,7 @@ extension BluetoothManager: CBPeripheralDelegate {
             } else {
                 print("Received document chunk of size: \(data.count) bytes")
                 documentBuffer.append(data)
-                let maxExpectedSize: Float = 1024 * 1024 // 1MB
+                let maxExpectedSize: Float = 1024 * 1024
                 let newProgress = min(1.0, Float(documentBuffer.count) / maxExpectedSize)
                 if newProgress != documentTransferProgress {
                     documentTransferProgress = newProgress

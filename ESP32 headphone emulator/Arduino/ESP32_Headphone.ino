@@ -6,7 +6,6 @@
 #define SERVICE_UUID        "0000FFE0-0000-1000-8000-00805F9B34FB"
 #define CHARACTERISTIC_UUID "0000FFE1-0000-1000-8000-00805F9B34FB"
 #define STATUS_UUID        "0000FFE2-0000-1000-8000-00805F9B34FB"
-#define DOCUMENT_UUID      "0000FFE3-0000-1000-8000-00805F9B34FB"
 
 // GAIA service and characteristics
 #define GAIA_SERVICE_UUID        "00001100-D102-11E1-9B23-00025B00A5A5"
@@ -16,7 +15,6 @@
 
 BLECharacteristic *pCommandCharacteristic;
 BLECharacteristic *pStatusCharacteristic;
-BLECharacteristic *pDocumentCharacteristic;
 BLECharacteristic *pGaiaCommandCharacteristic;
 BLECharacteristic *pGaiaResponseCharacteristic;
 BLECharacteristic *pGaiaDataCharacteristic;
@@ -27,19 +25,17 @@ int volumeLevel = 50;  // 0-100
 int batteryLevel = 100;  // 0-100
 int signalStrength = 100;  // 0-100
 unsigned long lastStatusUpdate = 0;
-const long statusUpdateInterval = 1000;  // Update status every second (changed from 60000)
-const long batteryUpdateInterval = 10000;  // Update battery every 10 seconds (changed from 300000)
+const long statusUpdateInterval = 1000;  // Update status every second
+const long batteryUpdateInterval = 10000;  // Update battery every 10 seconds
 unsigned long lastBatteryUpdate = 0;
 
-// Add document buffer
-String documentBuffer = "";
-bool isDocumentTransferInProgress = false;
-
-// Image transfer variables
-bool imageTransferInProgress = false;
-uint32_t expectedImageSize = 0;
-uint32_t receivedImageSize = 0;
-const uint32_t CHUNK_SIZE = 512; // Process in 512-byte chunks
+// File transfer variables
+bool fileTransferInProgress = false;
+uint32_t expectedFileSize = 0;
+uint32_t receivedFileSize = 0;
+uint8_t fileType = 0;  // 1 for image, 2 for document
+String fileName = "";
+const uint32_t CHUNK_SIZE = 12; // Process in 12-byte chunks (20 - 8 bytes for header)
 uint8_t* chunkBuffer = NULL;
 
 // Forward declarations
@@ -115,51 +111,6 @@ class MyCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
-// Add new callback class for document handling
-class DocumentCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic *pCharacteristic) {
-    String rxValue = pCharacteristic->getValue();
-    
-    if (rxValue.length() > 0) {
-      Serial.print("Received Document Chunk: ");
-      Serial.println(rxValue);
-      
-      if (rxValue == "START_DOCUMENT") {
-        Serial.println("Starting document transfer");
-        documentBuffer = "";
-        isDocumentTransferInProgress = true;
-        pCharacteristic->setValue("Document transfer started");
-        pCharacteristic->notify();
-        Serial.println("Sent: Document transfer started");
-      }
-      else if (rxValue == "END_DOCUMENT") {
-        Serial.println("Ending document transfer");
-        isDocumentTransferInProgress = false;
-        pCharacteristic->setValue("Document transfer completed");
-        pCharacteristic->notify();
-        Serial.println("Sent: Document transfer completed");
-        Serial.print("📄 Final document size: ");
-        Serial.println(documentBuffer.length());
-        Serial.println("📄 Document content:");
-        Serial.println(documentBuffer);
-        // Here you could save the document to SPIFFS if needed
-      }
-      else if (isDocumentTransferInProgress) {
-        Serial.print("Received chunk of size: ");
-        Serial.println(rxValue.length());
-        documentBuffer += rxValue;
-        Serial.print("Current document size: ");
-        Serial.println(documentBuffer.length());
-        // Send acknowledgment
-        pCharacteristic->setValue("Chunk received");
-        pCharacteristic->notify();
-        Serial.println("Sent: Chunk received");
-        delay(10); // Small delay to ensure notification is sent
-      }
-    }
-  }
-};
-
 class GaiaCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
         String value = pCharacteristic->getValue();
@@ -183,31 +134,57 @@ class GaiaCallbacks: public BLECharacteristicCallbacks {
                 Serial.print(", Payload length: ");
                 Serial.println(payloadLength);
                 
-                if (command == 0x46 && length >= 8) { // Start image transfer
-                    handleImageTransferStart(data + 4, payloadLength);
+                if (command == 0x46 && length >= 8) { // Start file transfer
+                    handleFileTransferStart(data + 4, payloadLength);
                 }
-                else if (command == 0x47 && length > 4) { // Image chunk
-                    if (!imageTransferInProgress) {
-                        Serial.println("Error: Received image chunk but no active transfer");
+                else if (command == 0x47 && length > 4) { // File chunk
+                    if (!fileTransferInProgress) {
+                        Serial.println("Error: Received file chunk but no active transfer");
                         sendGaiaResponse(0x47, 0x01); // Error
                         return;
                     }
-                    handleImageChunk(data + 4, payloadLength);
+                    handleFileChunk(data + 4, payloadLength);
                 }
             }
         }
     }
     
-    void handleImageTransferStart(const uint8_t* payload, uint16_t length) {
-        if (length != 4) {
-            Serial.println("Error: Invalid payload length for image transfer start");
+    void handleFileTransferStart(const uint8_t* payload, uint16_t length) {
+        if (length < 6) { // Minimum length: 1 byte type + 1 byte name length + 1 byte name + 4 bytes size
+            Serial.println("Error: Invalid payload length for file transfer start");
             sendGaiaResponse(0x46, 0x01); // Error
             return;
         }
         
-        expectedImageSize = (payload[3] << 24) | (payload[2] << 16) | (payload[1] << 8) | payload[0];
-        Serial.print("Starting image transfer, expected size: ");
-        Serial.println(expectedImageSize);
+        // Parse file info
+        fileType = payload[0];
+        uint8_t nameLength = payload[1];
+        
+        if (length < 6 + nameLength) {
+            Serial.println("Error: Invalid payload length for file name");
+            sendGaiaResponse(0x46, 0x01); // Error
+            return;
+        }
+        
+        // Extract file name
+        fileName = "";
+        for (int i = 0; i < nameLength; i++) {
+            fileName += (char)payload[2 + i];
+        }
+        
+        // Extract file size (4 bytes, little-endian)
+        expectedFileSize = (payload[2 + nameLength + 3] << 24) | 
+                          (payload[2 + nameLength + 2] << 16) | 
+                          (payload[2 + nameLength + 1] << 8) | 
+                          payload[2 + nameLength];
+        
+        Serial.print("Starting file transfer: ");
+        Serial.print(fileName);
+        Serial.print(" (Type: ");
+        Serial.print(fileType == 1 ? "Image" : "Document");
+        Serial.print(", Size: ");
+        Serial.print(expectedFileSize);
+        Serial.println(" bytes)");
         
         if (chunkBuffer != NULL) {
             free(chunkBuffer);
@@ -222,15 +199,15 @@ class GaiaCallbacks: public BLECharacteristicCallbacks {
             return;
         }
         
-        imageTransferInProgress = true;
-        receivedImageSize = 0;
+        fileTransferInProgress = true;
+        receivedFileSize = 0;
         sendGaiaResponse(0x46, 0x00); // Success
-        Serial.println("Image transfer started successfully");
+        Serial.println("File transfer started successfully");
     }
     
-    void handleImageChunk(const uint8_t* payload, uint16_t length) {
-        if (!imageTransferInProgress) {
-            Serial.println("Error: No active image transfer");
+    void handleFileChunk(const uint8_t* payload, uint16_t length) {
+        if (!fileTransferInProgress) {
+            Serial.println("Error: No active file transfer");
             sendGaiaResponse(0x47, 0x01); // Error
             return;
         }
@@ -241,7 +218,7 @@ class GaiaCallbacks: public BLECharacteristicCallbacks {
             return;
         }
         
-        if (receivedImageSize + length > expectedImageSize) {
+        if (receivedFileSize + length > expectedFileSize) {
             Serial.println("Error: Received more data than expected");
             sendGaiaResponse(0x47, 0x02); // Size error
             return;
@@ -249,24 +226,24 @@ class GaiaCallbacks: public BLECharacteristicCallbacks {
         
         // Process the chunk
         memcpy(chunkBuffer, payload, length);
-        receivedImageSize += length;
+        receivedFileSize += length;
         
         Serial.print("Received chunk of size: ");
         Serial.print(length);
         Serial.print(" bytes. Total received: ");
-        Serial.print(receivedImageSize);
+        Serial.print(receivedFileSize);
         Serial.print(" of ");
-        Serial.println(expectedImageSize);
+        Serial.println(expectedFileSize);
         
         // Here you would process the chunk (e.g., write to SPIFFS, display, etc.)
         // For now, we'll just acknowledge receipt
         
-        if (receivedImageSize == expectedImageSize) {
-            // Image transfer complete
-            imageTransferInProgress = false;
-            Serial.println("Image transfer complete!");
-            Serial.print("Final image size: ");
-            Serial.println(receivedImageSize);
+        if (receivedFileSize == expectedFileSize) {
+            // File transfer complete
+            fileTransferInProgress = false;
+            Serial.println("File transfer complete!");
+            Serial.print("Final file size: ");
+            Serial.println(receivedFileSize);
             
             // Free the buffer
             free(chunkBuffer);
@@ -302,33 +279,6 @@ void sendStatusUpdate() {
     pStatusCharacteristic->setValue(status);
     pStatusCharacteristic->notify();
   }
-}
-
-// Add document sending function with chunking
-void sendDocumentChunk(String chunk) {
-  if (deviceConnected) {
-    Serial.print("Sending document chunk of size: ");
-    Serial.println(chunk.length());
-    // Split large chunks if needed
-    const int maxChunkSize = 20; // Maximum chunk size
-    for (int i = 0; i < chunk.length(); i += maxChunkSize) {
-      int endIndex = (i + maxChunkSize) > chunk.length() ? chunk.length() : (i + maxChunkSize);
-      String subChunk = chunk.substring(i, endIndex);
-      Serial.print("Sending sub-chunk of size: ");
-      Serial.println(subChunk.length());
-      pDocumentCharacteristic->setValue(subChunk);
-      pDocumentCharacteristic->notify();
-      Serial.println("Sent sub-chunk");
-      delay(10); // Small delay to ensure notification is sent
-    }
-  } else {
-    Serial.println("Cannot send document chunk: device not connected");
-  }
-}
-
-// Add document reading function
-String getDocument() {
-  return documentBuffer;
 }
 
 void setup() {
@@ -369,18 +319,6 @@ void setup() {
   pStatusCharacteristic->addDescriptor(new BLE2902());
   pStatusCharacteristic->setValue(createStatusJSON());
 
-  // Create document characteristic
-  pDocumentCharacteristic = pService->createCharacteristic(
-                      DOCUMENT_UUID,
-                      BLECharacteristic::PROPERTY_READ   |
-                      BLECharacteristic::PROPERTY_WRITE  |
-                      BLECharacteristic::PROPERTY_NOTIFY |
-                      BLECharacteristic::PROPERTY_INDICATE
-                    );
-  pDocumentCharacteristic->addDescriptor(new BLE2902());
-  pDocumentCharacteristic->setCallbacks(new DocumentCallbacks());
-  pDocumentCharacteristic->setValue("Document Ready");
-
   // Create GAIA characteristics
   pGaiaCommandCharacteristic = pGaiaService->createCharacteristic(
       GAIA_COMMAND_UUID,
@@ -416,8 +354,6 @@ void setup() {
   pAdvertising->setScanResponse(true);
   pAdvertising->setMinPreferred(0x06);  // functions that help with iPhone connections issue
   pAdvertising->setMinPreferred(0x12);
-  pAdvertising->setMinInterval(0x20);    // set minimum advertising interval
-  pAdvertising->setMaxInterval(0x40);    // set maximum advertising interval
   pAdvertising->setMinInterval(0x20);    // set minimum advertising interval
   pAdvertising->setMaxInterval(0x40);    // set maximum advertising interval
   BLEDevice::startAdvertising();

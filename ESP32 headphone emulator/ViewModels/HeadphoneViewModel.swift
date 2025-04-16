@@ -21,10 +21,9 @@ class HeadphoneViewModel: ObservableObject {
     @Published var signalStrength: Double = 0.0
     @Published var discoveredDevices: [BluetoothDevice] = []
     @Published var isScanning: Bool = false
-    @Published var isDocumentTransferInProgress: Bool = false
-    @Published var documentTransferProgress: Float = 0.0
-    @Published var isImageTransferInProgress: Bool = false
-    @Published var imageTransferProgress: Float = 0.0
+    @Published var isFileTransferInProgress: Bool = false
+    @Published var fileTransferProgress: Float = 0.0
+    @Published var currentFileType: BluetoothManager.FileType = .unknown
     
     private var cancellables = Set<AnyCancellable>()
     
@@ -63,17 +62,14 @@ class HeadphoneViewModel: ObservableObject {
     }
     
     private func setupBindings() {
-        bluetoothManager.$isDocumentTransferInProgress
-            .assign(to: &$isDocumentTransferInProgress)
+        bluetoothManager.$isFileTransferInProgress
+            .assign(to: &$isFileTransferInProgress)
             
-        bluetoothManager.$documentTransferProgress
-            .assign(to: &$documentTransferProgress)
+        bluetoothManager.$fileTransferProgress
+            .assign(to: &$fileTransferProgress)
             
-        bluetoothManager.$isImageTransferInProgress
-            .assign(to: &$isImageTransferInProgress)
-            
-        bluetoothManager.$imageTransferProgress
-            .assign(to: &$imageTransferProgress)
+        bluetoothManager.$currentFileType
+            .assign(to: &$currentFileType)
     }
     
     func startScanning() {
@@ -115,16 +111,8 @@ class HeadphoneViewModel: ObservableObject {
         statusUpdateTimer = nil
     }
     
-    func startDocumentTransfer() {
-        bluetoothManager.startDocumentTransfer()
-    }
-    
-    func endDocumentTransfer() {
-        bluetoothManager.endDocumentTransfer()
-    }
-    
-    func sendImage(_ imageData: Data) {
-        bluetoothManager.sendImage(imageData)
+    func sendFile(_ fileData: Data, fileName: String) {
+        bluetoothManager.sendFile(fileData, fileName: fileName)
     }
     
     deinit {
