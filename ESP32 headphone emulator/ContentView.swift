@@ -11,6 +11,7 @@ struct ContentView: View {
     @StateObject var viewModel: HeadphoneViewModel
     @State private var showSettings = false
     @State private var showMessage = false
+    @State private var showFilePicker = false
     
     var body: some View {
         ZStack {
@@ -33,6 +34,35 @@ struct ContentView: View {
                     EqualizerView(isPlaying: viewModel.isPlaying)
                         .frame(height: 100)
                         .padding()
+                    
+                    Button(action: {
+                        showFilePicker.toggle()
+                    }) {
+                        VStack {
+                            Image(systemName: "doc.fill")
+                                .font(.system(size: 24))
+                            Text("Send File")
+                                .font(.headline)
+                        }
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.purple)
+                        .cornerRadius(10)
+                    }
+                    .padding(.horizontal)
+                    
+                    if viewModel.isFileTransferInProgress {
+                        VStack {
+                            ProgressView(value: viewModel.fileTransferProgress)
+                                .progressViewStyle(LinearProgressViewStyle(tint: .purple))
+                            Text("\(Int(viewModel.fileTransferProgress * 100))%")
+                                .foregroundColor(.white)
+                            Text("Transferring \(viewModel.currentFileType == .image ? "Image" : "Document")")
+                                .foregroundColor(.white)
+                                .font(.caption)
+                        }
+                        .padding()
+                    }
                 } else {
                     ScanningView(viewModel: viewModel)
                 }
@@ -59,6 +89,36 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
+        }
+        .fileImporter(
+            isPresented: $showFilePicker,
+            allowedContentTypes: [.image, .text, .pdf, .data],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                
+                guard url.startAccessingSecurityScopedResource() else {
+                    print("Failed to access security-scoped resource")
+                    return
+                }
+                
+                defer {
+                    url.stopAccessingSecurityScopedResource()
+                }
+                
+                do {
+                    let data = try Data(contentsOf: url)
+                    let fileName = url.lastPathComponent
+                    
+                    viewModel.sendFile(data, fileName: fileName)
+                } catch {
+                    print("Error reading file: \(error.localizedDescription)")
+                }
+            case .failure(let error):
+                print("Error selecting file: \(error.localizedDescription)")
+            }
         }
         .onChange(of: viewModel.receivedMessage) { oldValue, newValue in
             guard newValue != oldValue, !newValue.isEmpty else { return }

@@ -21,9 +21,16 @@ class HeadphoneViewModel: ObservableObject {
     @Published var signalStrength: Double = 0.0
     @Published var discoveredDevices: [BluetoothDevice] = []
     @Published var isScanning: Bool = false
+    @Published var isFileTransferInProgress: Bool = false
+    @Published var fileTransferProgress: Float = 0.0
+    @Published var currentFileType: BluetoothManager.FileType = .unknown
+    
+    private var cancellables = Set<AnyCancellable>()
     
     init(bluetoothManager: BluetoothManager) {
         self.bluetoothManager = bluetoothManager
+        
+        setupBindings()
         
         bluetoothManager.$connectionStatus
             .sink { [weak self] status in
@@ -46,19 +53,24 @@ class HeadphoneViewModel: ObservableObject {
             .assign(to: &$isScanning)
         
         bluetoothManager.$deviceStatus
+            .compactMap { $0 }
             .sink { [weak self] status in
-                guard let status = status else { return }
-                DispatchQueue.main.async {
-                    self?.isPlaying = status.playing
-                    self?.volumeLevel = status.volume
-                    self?.batteryLevel = Double(status.battery) / 100.0
-                    self?.signalStrength = Double(status.signal) / 100.0
-                }
+                self?.batteryLevel = Double(status.battery) / 100.0
+                self?.signalStrength = Double(status.signal) / 100.0
             }
             .store(in: &cancellables)
     }
     
-    private var cancellables = Set<AnyCancellable>()
+    private func setupBindings() {
+        bluetoothManager.$isFileTransferInProgress
+            .assign(to: &$isFileTransferInProgress)
+            
+        bluetoothManager.$fileTransferProgress
+            .assign(to: &$fileTransferProgress)
+            
+        bluetoothManager.$currentFileType
+            .assign(to: &$currentFileType)
+    }
     
     func startScanning() {
         bluetoothManager.startScanning()
@@ -97,6 +109,10 @@ class HeadphoneViewModel: ObservableObject {
     private func stopStatusUpdates() {
         statusUpdateTimer?.invalidate()
         statusUpdateTimer = nil
+    }
+    
+    func sendFile(_ fileData: Data, fileName: String) {
+        bluetoothManager.sendFile(fileData, fileName: fileName)
     }
     
     deinit {
