@@ -21,6 +21,23 @@ class BluetoothManager: NSObject, ObservableObject {
     private let statusUUID = CBUUID(string: "0000FFE2-0000-1000-8000-00805F9B34FB")
     private let documentUUID = CBUUID(string: "0000FFE3-0000-1000-8000-00805F9B34FB")
     
+    // GAIA Protocol Constants
+    private let gaiaServiceUUID = CBUUID(string: "00001100-D102-11E1-9B23-00025B00A5A5")
+    private let gaiaCommandUUID = CBUUID(string: "00001101-D102-11E1-9B23-00025B00A5A5")
+    private let gaiaResponseUUID = CBUUID(string: "00001102-D102-11E1-9B23-00025B00A5A5")
+    private let gaiaDataUUID = CBUUID(string: "00001103-D102-11E1-9B23-00025B00A5A5")
+    
+    private var gaiaCommandCharacteristic: CBCharacteristic?
+    private var gaiaResponseCharacteristic: CBCharacteristic?
+    private var gaiaDataCharacteristic: CBCharacteristic?
+    
+    private let maxGaiaPacketSize = 20
+    private let maxGaiaPayloadSize = 12
+    private var imageTransferInProgress = false
+    private var currentImageData = Data()
+    private var imageChunks: [Data] = []
+    private var currentChunkIndex = 0
+    
     @Published var discoveredDevices: [BluetoothDevice] = []
     @Published var isScanning = false
     @Published var connectionStatus = "Disconnected"
@@ -30,8 +47,15 @@ class BluetoothManager: NSObject, ObservableObject {
     @Published var documentData = Data()
     @Published var isDocumentTransferInProgress = false
     @Published var documentTransferProgress: Float = 0.0
+    @Published var isImageTransferInProgress = false
+    @Published var imageTransferProgress: Float = 0.0
     
     private var documentBuffer = Data()
+    
+    private let commandQueue = DispatchQueue(label: "com.esp32headphone.commandqueue")
+    private var currentCommand: Data?
+    private var isWaitingForResponse = false
+    private let maxChunkSize = 512
     
     override init() {
         super.init()
@@ -164,6 +188,144 @@ class BluetoothManager: NSObject, ObservableObject {
         print("Ending document transfer...")
         peripheral.writeValue("END_DOCUMENT".data(using: .utf8)!, for: characteristic, type: .withResponse)
     }
+
+    func sendImage(_ imageData: Data) {
+        guard let peripheral = connectedPeripheral,
+              let characteristic = gaiaCommandCharacteristic else {
+            print("Cannot send image: peripheral or characteristic not available")
+            return
+        }
+        
+        print("Starting image transfer with size: \(imageData.count) bytes")
+        
+        imageChunks = prepareImageChunks(imageData)
+        currentChunkIndex = 0
+        imageTransferInProgress = true
+        
+        var sizeBytes = UInt32(imageData.count).littleEndian
+        let sizeData = Data(bytes: &sizeBytes, count: MemoryLayout<UInt32>.size)
+        
+        let startCommand = createGaiaCommand(command: 0x46, payload: sizeData)
+        print("Sending start command (0x46) with size: \(sizeData.count) bytes")
+        
+        commandQueue.async { [weak self] in
+            self?.sendCommand(startCommand, characteristic: characteristic)
+        }
+    }
+    
+    private func sendCommand(_ data: Data, characteristic: CBCharacteristic) {
+        guard !isWaitingForResponse else {
+            print("Waiting for previous command response")
+            return
+        }
+        
+        isWaitingForResponse = true
+        currentCommand = data
+        
+        if let peripheral = connectedPeripheral {
+            peripheral.writeValue(data, for: characteristic, type: .withResponse)
+        }
+    }
+    
+    private func sendNextImageChunk() {
+        guard imageTransferInProgress,
+              currentChunkIndex < imageChunks.count,
+              let peripheral = connectedPeripheral,
+              let characteristic = gaiaDataCharacteristic else {
+            print("Cannot send next chunk: transfer not in progress or invalid state")
+            return
+        }
+        
+        let chunk = imageChunks[currentChunkIndex]
+        let chunkCommand = createGaiaCommand(command: 0x47, payload: chunk)
+        print("Sending chunk \(currentChunkIndex + 1)/\(imageChunks.count) of size: \(chunk.count) bytes")
+        
+        commandQueue.async { [weak self] in
+            self?.sendCommand(chunkCommand, characteristic: characteristic)
+        }
+    }
+    
+    private func handleGaiaResponse(_ data: Data) {
+        guard data.count >= 4 else {
+            print("Invalid GAIA response: too short")
+            return
+        }
+        
+        let command = data[1]
+        let status = data[3]
+        
+        print("Received GAIA response: command=0x\(String(format: "%02X", command)), status=0x\(String(format: "%02X", status))")
+        
+        isWaitingForResponse = false
+        
+        switch command {
+        case 0x46:
+            if status == 0x00 {
+                print("Image transfer start acknowledged successfully")
+                imageTransferProgress = 0.0
+                sendNextImageChunk()
+            } else {
+                print("Failed to start image transfer. Status: \(status)")
+                imageTransferInProgress = false
+                imageChunks.removeAll()
+                currentChunkIndex = 0
+            }
+            
+        case 0x47:
+            if status == 0x00 {
+                currentChunkIndex += 1
+                imageTransferProgress = Float(currentChunkIndex) / Float(imageChunks.count)
+                print("Chunk \(currentChunkIndex)/\(imageChunks.count) acknowledged")
+                
+                if currentChunkIndex < imageChunks.count {
+                    sendNextImageChunk()
+                } else {
+                    imageTransferInProgress = false
+                    imageTransferProgress = 1.0
+                    imageChunks.removeAll()
+                    currentChunkIndex = 0
+                    print("Image transfer completed successfully")
+                }
+            } else {
+                print("Failed to send image chunk. Status: \(status)")
+                imageTransferInProgress = false
+                imageChunks.removeAll()
+                currentChunkIndex = 0
+            }
+            
+        default:
+            print("Unknown GAIA command response: 0x\(String(format: "%02X", command))")
+            break
+        }
+    }
+    
+    private func prepareImageChunks(_ data: Data) -> [Data] {
+        var chunks: [Data] = []
+        let chunkSize = maxGaiaPayloadSize
+        
+        var offset = 0
+        while offset < data.count {
+            let length = min(chunkSize, data.count - offset)
+            let chunk = data[offset..<(offset + length)]
+            chunks.append(Data(chunk))
+            offset += length
+        }
+        
+        print("Prepared \(chunks.count) chunks of size \(chunkSize) bytes each")
+        return chunks
+    }
+    
+    private func createGaiaCommand(command: UInt8, payload: Data) -> Data {
+        var packet = Data()
+        packet.append(0x10)
+        packet.append(command)
+        let length = UInt16(payload.count).littleEndian
+        withUnsafeBytes(of: length) { bytes in
+            packet.append(contentsOf: bytes)
+        }
+        packet.append(payload)
+        return packet
+    }
 }
 
 extension BluetoothManager: CBCentralManagerDelegate {
@@ -239,7 +401,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
             discoveredDevices[index].isConnected = true
         }
         
-        peripheral.discoverServices([serviceUUID])
+        peripheral.discoverServices([serviceUUID, gaiaServiceUUID])
     }
     
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -280,6 +442,8 @@ extension BluetoothManager: CBPeripheralDelegate {
         for service in services {
             if service.uuid == serviceUUID {
                 peripheral.discoverCharacteristics([commandUUID, statusUUID, documentUUID], for: service)
+            } else if service.uuid == gaiaServiceUUID {
+                peripheral.discoverCharacteristics([gaiaCommandUUID, gaiaResponseUUID, gaiaDataUUID], for: service)
             }
         }
     }
@@ -302,6 +466,14 @@ extension BluetoothManager: CBPeripheralDelegate {
             } else if characteristic.uuid == documentUUID {
                 documentCharacteristic = characteristic
                 peripheral.setNotifyValue(true, for: characteristic)
+            } else if characteristic.uuid == gaiaCommandUUID {
+                gaiaCommandCharacteristic = characteristic
+            } else if characteristic.uuid == gaiaResponseUUID {
+                gaiaResponseCharacteristic = characteristic
+                peripheral.setNotifyValue(true, for: characteristic)
+            } else if characteristic.uuid == gaiaDataUUID {
+                gaiaDataCharacteristic = characteristic
+                peripheral.setNotifyValue(true, for: characteristic)
             }
         }
     }
@@ -313,7 +485,9 @@ extension BluetoothManager: CBPeripheralDelegate {
         }
         
         if let data = characteristic.value {
-            if characteristic.uuid == documentUUID {
+            if characteristic.uuid == gaiaResponseUUID {
+                handleGaiaResponse(data)
+            } else if characteristic.uuid == documentUUID {
                 handleDocumentData(data)
             } else if let message = String(data: data, encoding: .utf8) {
                 receivedMessage = message

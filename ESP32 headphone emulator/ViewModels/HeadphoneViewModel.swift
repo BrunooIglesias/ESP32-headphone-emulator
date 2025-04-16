@@ -23,6 +23,10 @@ class HeadphoneViewModel: ObservableObject {
     @Published var isScanning: Bool = false
     @Published var isDocumentTransferInProgress: Bool = false
     @Published var documentTransferProgress: Float = 0.0
+    @Published var isImageTransferInProgress: Bool = false
+    @Published var imageTransferProgress: Float = 0.0
+    
+    private var cancellables = Set<AnyCancellable>()
     
     init(bluetoothManager: BluetoothManager) {
         self.bluetoothManager = bluetoothManager
@@ -58,14 +62,18 @@ class HeadphoneViewModel: ObservableObject {
             .store(in: &cancellables)
     }
     
-    private var cancellables = Set<AnyCancellable>()
-    
     private func setupBindings() {
         bluetoothManager.$isDocumentTransferInProgress
             .assign(to: &$isDocumentTransferInProgress)
             
         bluetoothManager.$documentTransferProgress
             .assign(to: &$documentTransferProgress)
+            
+        bluetoothManager.$isImageTransferInProgress
+            .assign(to: &$isImageTransferInProgress)
+            
+        bluetoothManager.$imageTransferProgress
+            .assign(to: &$imageTransferProgress)
     }
     
     func startScanning() {
@@ -113,6 +121,10 @@ class HeadphoneViewModel: ObservableObject {
     
     func endDocumentTransfer() {
         bluetoothManager.endDocumentTransfer()
+    }
+    
+    func sendImage(_ imageData: Data) {
+        bluetoothManager.sendImage(imageData)
     }
     
     deinit {

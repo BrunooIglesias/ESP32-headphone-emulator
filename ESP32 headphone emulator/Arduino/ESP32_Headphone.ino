@@ -8,9 +8,18 @@
 #define STATUS_UUID        "0000FFE2-0000-1000-8000-00805F9B34FB"
 #define DOCUMENT_UUID      "0000FFE3-0000-1000-8000-00805F9B34FB"
 
+// GAIA service and characteristics
+#define GAIA_SERVICE_UUID        "00001100-D102-11E1-9B23-00025B00A5A5"
+#define GAIA_COMMAND_UUID        "00001101-D102-11E1-9B23-00025B00A5A5"
+#define GAIA_RESPONSE_UUID       "00001102-D102-11E1-9B23-00025B00A5A5"
+#define GAIA_DATA_UUID          "00001103-D102-11E1-9B23-00025B00A5A5"
+
 BLECharacteristic *pCommandCharacteristic;
 BLECharacteristic *pStatusCharacteristic;
 BLECharacteristic *pDocumentCharacteristic;
+BLECharacteristic *pGaiaCommandCharacteristic;
+BLECharacteristic *pGaiaResponseCharacteristic;
+BLECharacteristic *pGaiaDataCharacteristic;
 
 bool deviceConnected = false;
 bool isPlaying = false;
@@ -25,6 +34,13 @@ unsigned long lastBatteryUpdate = 0;
 // Add document buffer
 String documentBuffer = "";
 bool isDocumentTransferInProgress = false;
+
+// Image transfer variables
+bool imageTransferInProgress = false;
+uint32_t expectedImageSize = 0;
+uint32_t receivedImageSize = 0;
+const uint32_t CHUNK_SIZE = 512; // Process in 512-byte chunks
+uint8_t* chunkBuffer = NULL;
 
 // Forward declarations
 String createStatusJSON();
@@ -144,6 +160,134 @@ class DocumentCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
+class GaiaCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+        String value = pCharacteristic->getValue();
+        
+        if (value.length() > 0) {
+            const uint8_t* data = (const uint8_t*)value.c_str();
+            size_t length = value.length();
+            
+            Serial.print("Received GAIA command: ");
+            Serial.print(data[1], HEX);
+            Serial.print(" with length: ");
+            Serial.println(length);
+            
+            if (length >= 4) {
+                uint8_t version = data[0];
+                uint8_t command = data[1];
+                uint16_t payloadLength = (data[3] << 8) | data[2];
+                
+                Serial.print("Command: 0x");
+                Serial.print(command, HEX);
+                Serial.print(", Payload length: ");
+                Serial.println(payloadLength);
+                
+                if (command == 0x46 && length >= 8) { // Start image transfer
+                    handleImageTransferStart(data + 4, payloadLength);
+                }
+                else if (command == 0x47 && length > 4) { // Image chunk
+                    if (!imageTransferInProgress) {
+                        Serial.println("Error: Received image chunk but no active transfer");
+                        sendGaiaResponse(0x47, 0x01); // Error
+                        return;
+                    }
+                    handleImageChunk(data + 4, payloadLength);
+                }
+            }
+        }
+    }
+    
+    void handleImageTransferStart(const uint8_t* payload, uint16_t length) {
+        if (length != 4) {
+            Serial.println("Error: Invalid payload length for image transfer start");
+            sendGaiaResponse(0x46, 0x01); // Error
+            return;
+        }
+        
+        expectedImageSize = (payload[3] << 24) | (payload[2] << 16) | (payload[1] << 8) | payload[0];
+        Serial.print("Starting image transfer, expected size: ");
+        Serial.println(expectedImageSize);
+        
+        if (chunkBuffer != NULL) {
+            free(chunkBuffer);
+            chunkBuffer = NULL;
+        }
+        
+        // Allocate buffer for processing chunks
+        chunkBuffer = (uint8_t*)malloc(CHUNK_SIZE);
+        if (chunkBuffer == NULL) {
+            Serial.println("Failed to allocate memory for chunk buffer");
+            sendGaiaResponse(0x46, 0x02); // Memory allocation error
+            return;
+        }
+        
+        imageTransferInProgress = true;
+        receivedImageSize = 0;
+        sendGaiaResponse(0x46, 0x00); // Success
+        Serial.println("Image transfer started successfully");
+    }
+    
+    void handleImageChunk(const uint8_t* payload, uint16_t length) {
+        if (!imageTransferInProgress) {
+            Serial.println("Error: No active image transfer");
+            sendGaiaResponse(0x47, 0x01); // Error
+            return;
+        }
+        
+        if (chunkBuffer == NULL) {
+            Serial.println("Error: Chunk buffer is NULL");
+            sendGaiaResponse(0x47, 0x01); // Error
+            return;
+        }
+        
+        if (receivedImageSize + length > expectedImageSize) {
+            Serial.println("Error: Received more data than expected");
+            sendGaiaResponse(0x47, 0x02); // Size error
+            return;
+        }
+        
+        // Process the chunk
+        memcpy(chunkBuffer, payload, length);
+        receivedImageSize += length;
+        
+        Serial.print("Received chunk of size: ");
+        Serial.print(length);
+        Serial.print(" bytes. Total received: ");
+        Serial.print(receivedImageSize);
+        Serial.print(" of ");
+        Serial.println(expectedImageSize);
+        
+        // Here you would process the chunk (e.g., write to SPIFFS, display, etc.)
+        // For now, we'll just acknowledge receipt
+        
+        if (receivedImageSize == expectedImageSize) {
+            // Image transfer complete
+            imageTransferInProgress = false;
+            Serial.println("Image transfer complete!");
+            Serial.print("Final image size: ");
+            Serial.println(receivedImageSize);
+            
+            // Free the buffer
+            free(chunkBuffer);
+            chunkBuffer = NULL;
+        }
+        
+        sendGaiaResponse(0x47, 0x00); // Success
+    }
+    
+    void sendGaiaResponse(uint8_t command, uint8_t status) {
+        uint8_t response[5] = {0x10, command, 0x01, 0x00, status};
+        pGaiaResponseCharacteristic->setValue(response, 5);
+        pGaiaResponseCharacteristic->notify();
+        
+        Serial.print("Sent GAIA response: command=0x");
+        Serial.print(command, HEX);
+        Serial.print(", status=0x");
+        Serial.println(status, HEX);
+    }
+};
+
 // Function implementations
 String createStatusJSON() {
   return "{\"playing\":" + String(isPlaying ? "true" : "false") +
@@ -200,6 +344,9 @@ void setup() {
   // Create the BLE service
   BLEService *pService = pServer->createService(SERVICE_UUID);
 
+  // Create GAIA service
+  BLEService *pGaiaService = pServer->createService(GAIA_SERVICE_UUID);
+
   // Create command characteristic
   pCommandCharacteristic = pService->createCharacteristic(
                       CHARACTERISTIC_UUID,
@@ -234,12 +381,38 @@ void setup() {
   pDocumentCharacteristic->setCallbacks(new DocumentCallbacks());
   pDocumentCharacteristic->setValue("Document Ready");
 
+  // Create GAIA characteristics
+  pGaiaCommandCharacteristic = pGaiaService->createCharacteristic(
+      GAIA_COMMAND_UUID,
+      BLECharacteristic::PROPERTY_WRITE
+  );
+  pGaiaCommandCharacteristic->addDescriptor(new BLE2902());
+  pGaiaCommandCharacteristic->setCallbacks(new GaiaCallbacks());
+  
+  pGaiaResponseCharacteristic = pGaiaService->createCharacteristic(
+      GAIA_RESPONSE_UUID,
+      BLECharacteristic::PROPERTY_READ |
+      BLECharacteristic::PROPERTY_NOTIFY
+  );
+  pGaiaResponseCharacteristic->addDescriptor(new BLE2902());
+  
+  pGaiaDataCharacteristic = pGaiaService->createCharacteristic(
+      GAIA_DATA_UUID,
+      BLECharacteristic::PROPERTY_WRITE |
+      BLECharacteristic::PROPERTY_READ |
+      BLECharacteristic::PROPERTY_NOTIFY
+  );
+  pGaiaDataCharacteristic->addDescriptor(new BLE2902());
+  pGaiaDataCharacteristic->setCallbacks(new GaiaCallbacks());
+
   // Start the BLE service
   pService->start();
+  pGaiaService->start();
 
   // Configure advertising
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->addServiceUUID(GAIA_SERVICE_UUID);
   pAdvertising->setScanResponse(true);
   pAdvertising->setMinPreferred(0x06);  // functions that help with iPhone connections issue
   pAdvertising->setMinPreferred(0x12);
@@ -249,7 +422,7 @@ void setup() {
   pAdvertising->setMaxInterval(0x40);    // set maximum advertising interval
   BLEDevice::startAdvertising();
   
-  Serial.println("BLE headphone emulator is up and running. Waiting for client...");
+  Serial.println("BLE headphone emulator is up and running with GAIA support. Waiting for client...");
 }
 
 void loop() {
