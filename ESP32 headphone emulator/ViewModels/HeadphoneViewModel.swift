@@ -12,7 +12,7 @@ import SwiftUI
 class HeadphoneViewModel: ObservableObject {
     private let bluetoothManager: BluetoothManager
     private var statusUpdateTimer: Timer?
-    
+
     @Published var connectionStatus: String = "Disconnected"
     @Published var receivedMessage: String = ""
     @Published var isPlaying: Bool = false
@@ -21,19 +21,14 @@ class HeadphoneViewModel: ObservableObject {
     @Published var signalStrength: Double = 0.0
     @Published var discoveredDevices: [BluetoothDevice] = []
     @Published var isScanning: Bool = false
-    @Published var isFileTransferInProgress: Bool = false
-    @Published var fileTransferProgress: Float = 0.0
-    @Published var currentFileType: BluetoothManager.FileType = .unknown
     @Published var receivedDocument: String? = nil
     @Published var showReceivedDocument: Bool = false
-    
+
     private var cancellables = Set<AnyCancellable>()
-    
+
     init(bluetoothManager: BluetoothManager) {
         self.bluetoothManager = bluetoothManager
-        
-        setupBindings()
-        
+
         bluetoothManager.$connectionStatus
             .sink { [weak self] status in
                 self?.connectionStatus = status
@@ -44,16 +39,16 @@ class HeadphoneViewModel: ObservableObject {
                 }
             }
             .store(in: &cancellables)
-        
+
         bluetoothManager.$receivedMessage
             .assign(to: &$receivedMessage)
-        
+
         bluetoothManager.$discoveredDevices
             .assign(to: &$discoveredDevices)
-        
+
         bluetoothManager.$isScanning
             .assign(to: &$isScanning)
-        
+
         bluetoothManager.$deviceStatus
             .compactMap { $0 }
             .sink { [weak self] status in
@@ -61,10 +56,7 @@ class HeadphoneViewModel: ObservableObject {
                 self?.signalStrength = Double(status.signal) / 100.0
             }
             .store(in: &cancellables)
-        
-        bluetoothManager.$currentFileType
-            .assign(to: &$currentFileType)
-            
+
         bluetoothManager.$receivedDocument
             .compactMap { $0 }
             .sink { [weak self] document in
@@ -73,62 +65,49 @@ class HeadphoneViewModel: ObservableObject {
             }
             .store(in: &cancellables)
     }
-    
-    private func setupBindings() {
-        bluetoothManager.$isFileTransferInProgress
-            .assign(to: &$isFileTransferInProgress)
-            
-        bluetoothManager.$fileTransferProgress
-            .assign(to: &$fileTransferProgress)
-    }
-    
+
     func startScanning() {
         bluetoothManager.startScanning()
     }
-    
+
     func stopScanning() {
         bluetoothManager.stopScanning()
     }
-    
+
     func connect(to device: BluetoothDevice) {
-        print("HeadphoneViewModel: Connecting to device: \(device.name)")
         bluetoothManager.connect(to: device)
     }
-    
+
     func disconnect() {
-        print("HeadphoneViewModel: Disconnecting from current device")
         bluetoothManager.disconnect()
     }
-    
+
     func sendCommand(_ command: String) {
         bluetoothManager.sendCommand(command)
     }
-    
+
     func requestStatus() {
         bluetoothManager.requestStatus()
     }
-    
+
     private func startStatusUpdates() {
         requestStatus()
-        
-        statusUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+
+        statusUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0,
+                                                 repeats: true) { [weak self] _ in
             self?.requestStatus()
         }
     }
-    
+
     private func stopStatusUpdates() {
         statusUpdateTimer?.invalidate()
         statusUpdateTimer = nil
     }
-    
-    func sendFile(_ fileData: Data, fileName: String) {
-        bluetoothManager.sendFile(fileData, fileName: fileName)
-    }
-    
+
     func requestDocument() {
         bluetoothManager.requestDocument()
     }
-    
+
     deinit {
         stopStatusUpdates()
     }

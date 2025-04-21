@@ -51,11 +51,13 @@ extension BluetoothManager: CBCentralManagerDelegate {
             discoveredDevices[index].rssi = RSSI.intValue
             discoveredDevices[index].peripheral = peripheral
         } else {
-            let device = BluetoothDevice(id: peripheral.identifier,
-                                         name: peripheral.name ?? "Unknown Device",
-                                         rssi: RSSI.intValue,
-                                         isConnected: false,
-                                         peripheral: peripheral)
+            let device = BluetoothDevice(
+                id: peripheral.identifier,
+                name: peripheral.name ?? "Unknown Device",
+                rssi: RSSI.intValue,
+                isConnected: false,
+                peripheral: peripheral
+            )
             discoveredDevices.append(device)
         }
     }
@@ -69,8 +71,10 @@ extension BluetoothManager: CBCentralManagerDelegate {
         if let index = discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
             discoveredDevices[index].isConnected = true
         }
-        peripheral.discoverServices([BluetoothConstants.serviceUUID,
-                                     BluetoothConstants.gaiaServiceUUID])
+        peripheral.discoverServices([
+            BluetoothConstants.serviceUUID,
+            BluetoothConstants.gaiaServiceUUID
+        ])
     }
     
     func centralManager(_ central: CBCentralManager,
@@ -89,7 +93,6 @@ extension BluetoothManager: CBCentralManagerDelegate {
         connectedPeripheral = nil
         commandCharacteristic = nil
         statusCharacteristic = nil
-        documentCharacteristic = nil
         connectionStatus = "Disconnected"
         deviceStatus = nil
         if let index = discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
