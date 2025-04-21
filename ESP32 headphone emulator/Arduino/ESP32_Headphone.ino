@@ -60,16 +60,19 @@ void sendStatusUpdate() {
     String js = createStatusJSON();
     pStatusCharacteristic->setValue(js);
     pStatusCharacteristic->notify();
+    Serial.println("Status update sent: " + js);
   }
 }
 
 class MyServerCallbacks: public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) override {
     deviceConnected = true;
+    Serial.println("Client connected");
     sendStatusUpdate();
   }
   void onDisconnect(BLEServer* pServer) override {
     deviceConnected = false;
+    Serial.println("Client disconnected");
     BLEDevice::startAdvertising();
   }
 };
@@ -77,14 +80,37 @@ class MyServerCallbacks: public BLEServerCallbacks {
 class MyCallbacks: public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) override {
     String rx = pCharacteristic->getValue();
+    Serial.println("Received command: " + rx);
     String resp;
     bool upd = false;
-    if      (rx == "PLAY")        { isPlaying = true;  resp = "Playing"; upd = true; }
-    else if (rx == "PAUSE")       { isPlaying = false; resp = "Paused";  upd = true; }
-    else if (rx == "VOLUME UP")   { volumeLevel = min(100, volumeLevel + 5); resp = "VOL " + String(volumeLevel); upd = true; }
-    else if (rx == "VOLUME DOWN") { volumeLevel = max(0, volumeLevel - 5); resp = "VOL " + String(volumeLevel); upd = true; }
-    else if (rx == "GET_STATUS")  { resp = createStatusJSON(); upd = true; }
-    else                          { resp = "Invalid"; }
+    if (rx == "PLAY") {
+      isPlaying = true;
+      resp = "Playing";
+      upd = true;
+      Serial.println("Action: PLAY");
+    } else if (rx == "PAUSE") {
+      isPlaying = false;
+      resp = "Paused";
+      upd = true;
+      Serial.println("Action: PAUSE");
+    } else if (rx == "VOLUME UP") {
+      volumeLevel = min(100, volumeLevel + 5);
+      resp = "VOL " + String(volumeLevel);
+      upd = true;
+      Serial.println("Action: VOLUME UP -> " + String(volumeLevel));
+    } else if (rx == "VOLUME DOWN") {
+      volumeLevel = max(0, volumeLevel - 5);
+      resp = "VOL " + String(volumeLevel);
+      upd = true;
+      Serial.println("Action: VOLUME DOWN -> " + String(volumeLevel));
+    } else if (rx == "GET_STATUS") {
+      resp = createStatusJSON();
+      upd = true;
+      Serial.println("Action: GET_STATUS");
+    } else {
+      resp = "Invalid";
+      Serial.println("Action: INVALID COMMAND");
+    }
     pCharacteristic->setValue(resp);
     pCharacteristic->notify();
     if (upd) sendStatusUpdate();
@@ -100,6 +126,7 @@ class GaiaCallbacks: public BLECharacteristicCallbacks {
       uint8_t cmd = data[1];
       uint16_t plen = (data[3] << 8) | data[2];
       if (cmd == 0x46 && plen == 1 && data[4] == 0x02) {
+        Serial.println("GAIA command received: Request Document");
         size_t docLen = strlen(HARDCODED_DOCUMENT);
         const size_t CHUNK = 12;
         for (size_t off = 0; off < docLen; off += CHUNK) {
@@ -112,11 +139,13 @@ class GaiaCallbacks: public BLECharacteristicCallbacks {
           memcpy(packet + 4, HARDCODED_DOCUMENT + off, sz);
           pGaiaDataCharacteristic->setValue(packet, 4 + sz);
           pGaiaDataCharacteristic->notify();
+          Serial.println("Sent GAIA chunk (" + String(sz) + " bytes)");
           delay(10);
         }
         uint8_t r[5] = {0x10, 0x46, 0x01, 0x00, 0x00};
         pGaiaResponseCharacteristic->setValue(r, 5);
         pGaiaResponseCharacteristic->notify();
+        Serial.println("Document transfer completed.");
       }
     }
   }
@@ -124,6 +153,7 @@ class GaiaCallbacks: public BLECharacteristicCallbacks {
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("ESP32 Headphone starting...");
   BLEDevice::init("ESP32_Headphone");
   BLEServer *srv = BLEDevice::createServer();
   srv->setCallbacks(new MyServerCallbacks());
@@ -172,6 +202,7 @@ void setup() {
   BLEDevice::getAdvertising()->addServiceUUID(SERVICE_UUID);
   BLEDevice::getAdvertising()->addServiceUUID(GAIA_SERVICE_UUID);
   BLEDevice::startAdvertising();
+  Serial.println("Advertising...");
 }
 
 void loop() {
