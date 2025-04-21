@@ -10,8 +10,6 @@ import SwiftUI
 struct ContentView: View {
     @StateObject var viewModel: HeadphoneViewModel
     @State private var showSettings = false
-    @State private var showMessage = false
-    @State private var showFilePicker = false
     
     var body: some View {
         ZStack {
@@ -62,17 +60,6 @@ struct ContentView: View {
             }
             .padding(.top, 20)
             .padding(.horizontal)
-            
-            if showMessage && !viewModel.receivedMessage.isEmpty {
-                VStack {
-                    Spacer()
-                    ReceivedMessageView(message: viewModel.receivedMessage)
-                        .padding(.bottom, 80)
-                        .padding(.horizontal)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .animation(.easeInOut, value: showMessage)
-                }
-            }
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
@@ -80,15 +67,6 @@ struct ContentView: View {
         .sheet(isPresented: $viewModel.showReceivedDocument) {
             if let document = viewModel.receivedDocument {
                 DocumentViewer(document: document)
-            }
-        }
-        .onChange(of: viewModel.receivedMessage) { oldValue, newValue in
-            guard newValue != oldValue, !newValue.isEmpty else { return }
-            showMessage = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                withAnimation {
-                    showMessage = false
-                }
             }
         }
     }

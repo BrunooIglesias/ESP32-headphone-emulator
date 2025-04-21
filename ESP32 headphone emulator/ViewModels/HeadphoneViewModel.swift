@@ -14,7 +14,6 @@ class HeadphoneViewModel: ObservableObject {
     private var statusUpdateTimer: Timer?
 
     @Published var connectionStatus: String = "Disconnected"
-    @Published var receivedMessage: String = ""
     @Published var isPlaying: Bool = false
     @Published var volumeLevel: Int = 50
     @Published var batteryLevel: Double = 0.0
@@ -39,9 +38,6 @@ class HeadphoneViewModel: ObservableObject {
                 }
             }
             .store(in: &cancellables)
-
-        bluetoothManager.$receivedMessage
-            .assign(to: &$receivedMessage)
 
         bluetoothManager.$discoveredDevices
             .assign(to: &$discoveredDevices)
