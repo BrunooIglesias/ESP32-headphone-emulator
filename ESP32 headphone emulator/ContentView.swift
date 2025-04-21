@@ -36,33 +36,20 @@ struct ContentView: View {
                         .padding()
                     
                     Button(action: {
-                        showFilePicker.toggle()
+                        viewModel.requestDocument()
                     }) {
                         VStack {
-                            Image(systemName: "doc.fill")
+                            Image(systemName: "doc.text.fill")
                                 .font(.system(size: 24))
-                            Text("Send File")
+                            Text("Receive Document")
                                 .font(.headline)
                         }
                         .foregroundColor(.white)
                         .padding()
-                        .background(Color.purple)
+                        .background(Color.blue)
                         .cornerRadius(10)
                     }
                     .padding(.horizontal)
-                    
-                    if viewModel.isFileTransferInProgress {
-                        VStack {
-                            ProgressView(value: viewModel.fileTransferProgress)
-                                .progressViewStyle(LinearProgressViewStyle(tint: .purple))
-                            Text("\(Int(viewModel.fileTransferProgress * 100))%")
-                                .foregroundColor(.white)
-                            Text("Transferring \(viewModel.currentFileType == .image ? "Image" : "Document")")
-                                .foregroundColor(.white)
-                                .font(.caption)
-                        }
-                        .padding()
-                    }
                 } else {
                     ScanningView(viewModel: viewModel)
                 }
@@ -90,34 +77,9 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
-        .fileImporter(
-            isPresented: $showFilePicker,
-            allowedContentTypes: [.image, .text, .pdf, .data],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case .success(let urls):
-                guard let url = urls.first else { return }
-                
-                guard url.startAccessingSecurityScopedResource() else {
-                    print("Failed to access security-scoped resource")
-                    return
-                }
-                
-                defer {
-                    url.stopAccessingSecurityScopedResource()
-                }
-                
-                do {
-                    let data = try Data(contentsOf: url)
-                    let fileName = url.lastPathComponent
-                    
-                    viewModel.sendFile(data, fileName: fileName)
-                } catch {
-                    print("Error reading file: \(error.localizedDescription)")
-                }
-            case .failure(let error):
-                print("Error selecting file: \(error.localizedDescription)")
+        .sheet(isPresented: $viewModel.showReceivedDocument) {
+            if let document = viewModel.receivedDocument {
+                DocumentViewer(document: document)
             }
         }
         .onChange(of: viewModel.receivedMessage) { oldValue, newValue in
