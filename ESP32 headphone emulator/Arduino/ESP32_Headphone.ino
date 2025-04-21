@@ -154,9 +154,11 @@ public:
                 Serial.println(payloadLength);
                 
                 if (command == 0x46) { // Start file/document transfer
-                    if (length >= 5 && data[4] == 0x02) { // Document type
+                    if (length >= 5 && data[4] == 0x02 && length == 5) { // Document type and minimal length
+                        // This is a request to send our document (only when it's just the type byte)
                         sendDocument();
                     } else {
+                        // This is a request to receive a document (when it contains file info)
                         handleFileTransferStart(data + 4, payloadLength);
                     }
                 }
@@ -196,9 +198,9 @@ public:
         }
         
         // Extract file size (4 bytes, little-endian)
-        expectedFileSize = (payload[2 + nameLength + 3] << 24) | 
-                          (payload[2 + nameLength + 2] << 16) | 
-                          (payload[2 + nameLength + 1] << 8) | 
+        expectedFileSize = (payload[2 + nameLength + 3] << 24) |
+                          (payload[2 + nameLength + 2] << 16) |
+                          (payload[2 + nameLength + 1] << 8) |
                           payload[2 + nameLength];
         
         Serial.print("Starting file transfer: ");
@@ -256,10 +258,20 @@ public:
         Serial.print(" bytes. Total received: ");
         Serial.print(receivedFileSize);
         Serial.print(" of ");
-        Serial.println(expectedFileSize);
+        Serial.print(expectedFileSize);
+        Serial.print(" bytes (");
+        Serial.print((receivedFileSize * 100) / expectedFileSize);
+        Serial.println("%)");
         
-        // Here you would process the chunk (e.g., write to SPIFFS, display, etc.)
-        // For now, we'll just acknowledge receipt
+        if (fileType == 2) { // Document type
+            // For documents, we can print the content as it arrives
+            char* text = (char*)malloc(length + 1);
+            if (text) {
+                memcpy(text, payload, length);
+                text[length] = '\0';
+                free(text);
+            }
+        }
         
         if (receivedFileSize == expectedFileSize) {
             // File transfer complete
